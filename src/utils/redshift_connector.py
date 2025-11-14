@@ -64,3 +64,120 @@ def execute_query(query):
     finally:
         cursor.close()
         conn.close()
+
+def get_available_databases():
+    """
+    Get list of available databases.
+    
+    Returns:
+        List of database names
+    """
+    conn = get_redshift_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("SELECT datname FROM pg_database WHERE datistemplate = false")
+        databases = [row[0] for row in cursor.fetchall()]
+        return databases
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_available_schemas():
+    """
+    Get list of available schemas.
+    
+    Returns:
+        List of schema names
+    """
+    conn = get_redshift_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT schema_name 
+            FROM information_schema.schemata 
+            WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
+            ORDER BY schema_name
+        """)
+        schemas = [row[0] for row in cursor.fetchall()]
+        return schemas
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_available_tables(schema_name=None):
+    """
+    Get list of available tables.
+    
+    Args:
+        schema_name: Optional schema name to filter tables
+        
+    Returns:
+        List of table names or dict of schema->tables
+    """
+    conn = get_redshift_connection()
+    cursor = conn.cursor()
+    
+    try:
+        if schema_name:
+            cursor.execute("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = %s AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+            """, (schema_name,))
+            tables = [row[0] for row in cursor.fetchall()]
+        else:
+            cursor.execute("""
+                SELECT table_schema, table_name 
+                FROM information_schema.tables 
+                WHERE table_schema NOT IN ('information_schema', 'pg_catalog') 
+                AND table_type = 'BASE TABLE'
+                ORDER BY table_schema, table_name
+            """)
+            results = cursor.fetchall()
+            tables = {}
+            for schema, table in results:
+                if schema not in tables:
+                    tables[schema] = []
+                tables[schema].append(table)
+        return tables
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_table_columns(schema_name, table_name):
+    """
+    Get columns for a specific table.
+    
+    Args:
+        schema_name: Schema name
+        table_name: Table name
+        
+    Returns:
+        List of column information
+    """
+    conn = get_redshift_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("""
+            SELECT column_name, data_type, is_nullable, column_default
+            FROM information_schema.columns 
+            WHERE table_schema = %s AND table_name = %s
+            ORDER BY ordinal_position
+        """, (schema_name, table_name))
+        
+        columns = []
+        for row in cursor.fetchall():
+            columns.append({
+                'name': row[0],
+                'type': row[1],
+                'nullable': row[2] == 'YES',
+                'default': row[3]
+            })
+        return columns
+    finally:
+        cursor.close()
+        conn.close()

@@ -67,66 +67,84 @@ def initialize_components():
 
 def load_all_metadata(vector_store, show_progress=False):
     """
-    Load metadata from Northwind tables.
+    Dynamically load metadata from any schema configured in .env
     """
-    # Create simple schema context for Northwind
-    schema_text = """
-    Database: sales_analyst, Schema: northwind
+    database = os.getenv('REDSHIFT_DATABASE', 'sales_analyst')
+    schema = os.getenv('REDSHIFT_SCHEMA', 'northwind')
     
-    CRITICAL: All date columns are stored as TEXT and MUST be cast to DATE for any date operations!
-    
-    Table: customers - Customer information
-    Columns: customerid (text), companyname (text), contactname (text), country (text)
-    
-    Table: orders - Order information  
-    Columns: orderid (integer), customerid (text), orderdate (TEXT - MUST use CAST(orderdate AS DATE) for DATE_TRUNC, EXTRACT, date operations), requireddate (TEXT - MUST use CAST(requireddate AS DATE)), shippeddate (TEXT - MUST use CAST(shippeddate AS DATE)), freight (real), shipcountry (text)
-    
-    Table: order_details - Order line items
-    Columns: orderid (integer), productid (integer), unitprice (real), quantity (integer)
-    
-    Table: products - Product catalog
-    Columns: productid (integer), productname (text), categoryid (integer), unitprice (real)
-    
-    Table: categories - Product categories
-    Columns: categoryid (integer), categoryname (text), description (text)
-    
-    Table: suppliers - Supplier information
-    Columns: supplierid (integer), companyname (text), country (text)
-    
-    Table: employees - Employee data
-    Columns: employeeid (integer), lastname (text), firstname (text), title (text), birthdate (TEXT - MUST use CAST(birthdate AS DATE)), hiredate (TEXT - MUST use CAST(hiredate AS DATE))
-    
-    Table: shippers - Shipping companies
-    Columns: shipperid (integer), companyname (text), phone (text)
-    """
-    
-    # Add to vector store
-    texts = [schema_text]
-    metadatas = [{'database': 'sales_analyst', 'schema': 'northwind', 'type': 'schema'}]
-    
-    # Get embeddings
-    embeddings = []
-    for text in texts:
-        embedding = vector_store.bedrock_client.get_embeddings(text)
-        embeddings.append(embedding)
-    
-    if embeddings:
-        embeddings_array = np.array(embeddings).astype('float32')
-        if embeddings_array.ndim == 1:
-            embeddings_array = embeddings_array.reshape(1, -1)
+    try:
+        # Get all tables in the schema
+        tables_query = f"""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = '{schema}' 
+            AND table_type = 'BASE TABLE'
+            ORDER BY table_name
+        """
+        tables_result = execute_query(tables_query)
         
-        vector_store.texts = texts
-        vector_store.metadata = metadatas
-        vector_store.index.add(embeddings_array)
+        if not tables_result:
+            if show_progress:
+                st.sidebar.warning(f"⚠️ No tables found in schema '{schema}'")
+            return None
         
+        # Build schema text dynamically
+        schema_parts = [f"Database: {database}, Schema: {schema}\n"]
+        
+        for (table_name,) in tables_result:
+            # Get columns for each table
+            columns_query = f"""
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns 
+                WHERE table_schema = '{schema}' 
+                AND table_name = '{table_name}'
+                ORDER BY ordinal_position
+            """
+            columns_result = execute_query(columns_query)
+            
+            if columns_result:
+                # Format columns
+                columns_list = []
+                for col_name, data_type, nullable in columns_result:
+                    col_desc = f"{col_name} ({data_type})"
+                    columns_list.append(col_desc)
+                
+                columns_str = ", ".join(columns_list)
+                schema_parts.append(f"Table: {table_name}\nColumns: {columns_str}\n")
+        
+        schema_text = "\n".join(schema_parts)
+        
+        # Add to vector store
+        texts = [schema_text]
+        metadatas = [{'database': database, 'schema': schema, 'type': 'schema'}]
+        
+        # Get embeddings
+        embeddings = []
+        for text in texts:
+            embedding = vector_store.bedrock_client.get_embeddings(text)
+            embeddings.append(embedding)
+        
+        if embeddings:
+            embeddings_array = np.array(embeddings).astype('float32')
+            if embeddings_array.ndim == 1:
+                embeddings_array = embeddings_array.reshape(1, -1)
+            
+            vector_store.texts = texts
+            vector_store.metadata = metadatas
+            vector_store.index.add(embeddings_array)
+            
+            if show_progress:
+                st.sidebar.success(f"✅ Loaded schema '{schema}' metadata")
+            
+            # Return dataframe with table count
+            import pandas as pd
+            return pd.DataFrame({'schema': [schema], 'tables': [len(tables_result)]})
+        
+        return None
+    except Exception as e:
         if show_progress:
-            st.sidebar.success(f"✅ Loaded Northwind schema metadata")
-        
-        # Return dummy dataframe
-        import pandas as pd
-        return pd.DataFrame({'schema': ['northwind'], 'loaded': [True]})
-    
-    return None
+            st.sidebar.error(f"❌ Error loading metadata: {str(e)}")
+        return None
 
 
 def main():
@@ -204,7 +222,6 @@ def main():
         try:
             conn = get_redshift_connection()
             conn.close()
-            st.sidebar.success("✅ Connected to Redshift")
         except:
             # Setup needed - do it silently
             with st.spinner("🚀 Setting up environment..."):
@@ -218,100 +235,126 @@ def main():
                     try:
                         conn = get_redshift_connection()
                         conn.close()
-                        st.sidebar.success("✅ Connected to Redshift")
                         break
                     except:
                         time.sleep(2)
                 else:
-                    st.sidebar.info("🔗 Still connecting... Please refresh in a moment")
+                    st.sidebar.error("❌ Connection timeout - please refresh")
                     st.stop()
         
-        # Auto-create Northwind database if it doesn't exist
+        # Auto-create Northwind database if it doesn't exist (silent)
         if not check_northwind_exists():
-            st.sidebar.info("🔄 Setting up Northwind database...")
-            with st.spinner("Creating Northwind database with complete dataset..."):
-                success = bootstrap_northwind(show_progress=True)
-                if success:
-                    st.sidebar.success("✅ Northwind database created successfully!")
-                    # Force metadata reload after database creation
-                    st.session_state.metadata_loaded = False
-                else:
-                    st.sidebar.error("❌ Failed to create Northwind database")
+            with st.spinner("Setting up sample database..."):
+                success = bootstrap_northwind(show_progress=False)
+                if not success:
+                    st.sidebar.error("❌ Database setup failed")
                     return
-        else:
-            st.sidebar.success("✅ Northwind database ready")
+                st.session_state.metadata_loaded = False
+        
+        # Display cluster connection info (always visible)
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🔗 Connection Status")
+        
+        try:
+            redshift_host = os.getenv('REDSHIFT_HOST', 'localhost')
+            cluster_id = redshift_host.split('.')[0] if redshift_host != 'localhost' else 'localhost'
+            database = os.getenv('REDSHIFT_DATABASE', 'sales_analyst')
+            schema = os.getenv('REDSHIFT_SCHEMA', 'northwind')
             
-        # Test database connection only once
+            # Get list of tables in schema (cached in session state)
+            if 'cluster_tables' not in st.session_state:
+                tables_result = execute_query(f"""
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = '{schema}' 
+                    ORDER BY table_name
+                """)
+                st.session_state.cluster_tables = [row[0] for row in tables_result] if tables_result else []
+            
+            tables = st.session_state.cluster_tables
+            
+            st.sidebar.success("✅ **Connected**")
+            st.sidebar.markdown(f"""
+            **Cluster:** `{cluster_id}`  
+            **Database:** `{database}`  
+            **Schema:** `{schema}`  
+            **Tables:** {len(tables)} available
+            """)
+            
+            if tables:
+                with st.sidebar.expander("📋 View All Tables"):
+                    for table in tables:
+                        st.write(f"• {table}")
+        except Exception as e:
+            st.sidebar.error(f"❌ Connection error")
+            
+        # Test database connection only once (silent check)
         if 'database_tested' not in st.session_state:
             try:
                 customer_result = execute_query("SELECT COUNT(*) FROM northwind.customers")
                 order_result = execute_query("SELECT COUNT(*) FROM northwind.orders")
                 
                 if customer_result and order_result:
-                    customers = customer_result[0]['count']
-                    orders = order_result[0]['count']
-                    st.sidebar.success(f"✅ Database has {customers} customers, {orders} orders")
+                    customers = customer_result[0][0]
+                    orders = order_result[0][0]
                     st.session_state.database_tested = True
+                    st.session_state.data_stats = {'customers': customers, 'orders': orders}
                     
                     if orders == 0:
-                        st.sidebar.warning("⚠️ No orders found - forcing database recreation")
-                        success = bootstrap_northwind(show_progress=True)
+                        success = bootstrap_northwind(show_progress=False)
                         if success:
-                            st.sidebar.success("✅ Database recreated with sample data")
                             st.session_state.metadata_loaded = False
-                else:
-                    st.sidebar.warning("⚠️ Database tables may be empty")
             except Exception as e:
-                st.sidebar.error(f"❌ Database test failed: {str(e)}")
+                st.sidebar.error(f"❌ Data validation failed")
                 return
-        else:
-            st.sidebar.success("✅ Database ready")
             
     except Exception as e:
-        st.sidebar.error(f"❌ Redshift connection failed: {str(e)}")
+        st.sidebar.error(f"❌ Connection failed: {str(e)}")
         return
     
-    # Load metadata on startup if not already loaded (runs only once)
+    # Load metadata on startup if not already loaded
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🤖 AI Query Engine")
+    
     if 'metadata_loaded' not in st.session_state or not st.session_state.metadata_loaded:
-        try:
-            metadata_df = load_all_metadata(components['vector_store'], show_progress=True)
-            if metadata_df is not None and len(metadata_df) > 0:
-                st.session_state.metadata_df = metadata_df
-                st.session_state.metadata_loaded = True
-                st.session_state.metadata_count = len(metadata_df)
-                st.sidebar.success(f"✅ Loaded metadata for {len(metadata_df)} columns")
-            else:
-                st.sidebar.warning("⚠️ No metadata loaded - database may still be setting up")
+        with st.spinner("Indexing schema for AI..."):
+            try:
+                metadata_df = load_all_metadata(components['vector_store'], show_progress=False)
+                if metadata_df is not None and len(metadata_df) > 0:
+                    st.session_state.metadata_df = metadata_df
+                    st.session_state.metadata_loaded = True
+                    # Count total columns
+                    tables = st.session_state.cluster_tables
+                    total_cols = 0
+                    schema = os.getenv('REDSHIFT_SCHEMA', 'northwind')
+                    for table in tables:
+                        cols = execute_query(f"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='{schema}' AND table_name='{table}'")
+                        if cols:
+                            total_cols += cols[0][0]
+                    st.session_state.metadata_count = total_cols
+                else:
+                    st.sidebar.warning("⚠️ Schema indexing incomplete")
+                    st.session_state.metadata_loaded = False
+            except Exception as e:
+                st.sidebar.error(f"❌ Indexing failed: {str(e)}")
                 st.session_state.metadata_loaded = False
-        except Exception as e:
-            st.sidebar.error(f"❌ Error loading metadata: {str(e)}")
-            st.session_state.metadata_loaded = False
+    
+    if st.session_state.get('metadata_loaded', False):
+        col_count = st.session_state.get('metadata_count', 0)
+        st.sidebar.success(f"✅ **Ready to Query**")
+        st.sidebar.markdown(f"Indexed **{col_count} columns** across all tables")
     else:
-        st.sidebar.success("✅ Metadata ready")
+        st.sidebar.warning("⚠️ Not ready - refresh page")
+    
+    st.sidebar.markdown("---")
     
     # Sidebar
     with st.sidebar:
         st.header("Settings")
         
-
-        
         # Workflow status
         if components['workflow']:
             st.success("✅ Analysis workflow enabled")
-        
-        # Reload metadata button
-        if st.button("🔄 Reload Metadata", key="reload_metadata"):
-            with st.spinner("Reloading database metadata..."):
-                st.session_state.metadata_loaded = False
-                metadata_df = load_all_metadata(components['vector_store'], show_progress=True)
-                if metadata_df is not None and len(metadata_df) > 0:
-                    st.session_state.metadata_df = metadata_df
-                    st.session_state.metadata_loaded = True
-                    st.session_state.metadata_count = len(metadata_df)
-                    st.success(f"✅ Reloaded metadata for {len(metadata_df)} columns")
-                    st.rerun()
-                else:
-                    st.error("❌ Failed to reload metadata")
         
         # Available data section moved to sidebar
         st.header("📋 Available Data")
@@ -330,16 +373,6 @@ def main():
         - 👔 **Employees** - Staff details and hierarchy
         - 🚛 **Shippers** - Delivery companies and contacts
         """)
-        
-        # Show available databases and schemas
-        with st.expander("Database Explorer", expanded=False):
-            if st.button("Show Databases"):
-                try:
-                    databases = get_available_databases()
-                    st.write("Available databases:")
-                    st.write(", ".join(databases))
-                except Exception as e:
-                    st.error(f"Error listing databases: {str(e)}")
     
     # Main content area - use full width for col1
     col1 = st.container()
@@ -374,7 +407,7 @@ def main():
     # Process question
     if question:
         if 'metadata_df' not in st.session_state or not st.session_state.get('metadata_loaded', False):
-            st.error("Metadata not loaded. Please click 'Reload Metadata' button in the sidebar.")
+            st.error("Metadata not loaded. Please refresh the page.")
             return
         
         try:

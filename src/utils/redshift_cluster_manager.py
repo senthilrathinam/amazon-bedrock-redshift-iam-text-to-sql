@@ -419,7 +419,14 @@ def create_redshift_cluster():
         aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
         aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
     )
-    cluster_id = 'sales-analyst-cluster'
+    
+    # Get cluster ID from REDSHIFT_HOST in .env or use default
+    redshift_host = os.getenv('REDSHIFT_HOST', 'localhost')
+    if redshift_host and redshift_host != 'localhost' and redshift_host != 'NOT_SET':
+        # Extract cluster ID from endpoint (e.g., "cluster-name.xxx.region.redshift.amazonaws.com")
+        cluster_id = redshift_host.split('.')[0]
+    else:
+        cluster_id = 'sales-analyst-cluster'
     
     # Start data download in background
     download_result = {'path': None}
