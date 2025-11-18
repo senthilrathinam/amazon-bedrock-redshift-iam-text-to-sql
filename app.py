@@ -388,25 +388,25 @@ def show_option2_workflow(setup_state):
         database = st.text_input("Database", value=cached_db)
         user = st.text_input("Username", value=cached_user)
         password = st.text_input("Password", type="password")
-            
-            if st.form_submit_button("Test Connection"):
-                if host and database and user and password:
-                    try:
-                        os.environ['REDSHIFT_HOST'] = host
-                        os.environ['REDSHIFT_DATABASE'] = database
-                        os.environ['REDSHIFT_USER'] = user
-                        os.environ['REDSHIFT_PASSWORD'] = password
-                        
-                        conn = get_redshift_connection()
-                        conn.close()
-                        
-                        setup_state.update_connection(host=host, database=database, schema='northwind', user=user, password=password)
-                        st.success("✅ Connection successful!")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Connection failed: {str(e)}")
-        return
+        
+        if st.form_submit_button("Test Connection"):
+            if host and database and user and password:
+                try:
+                    os.environ['REDSHIFT_HOST'] = host
+                    os.environ['REDSHIFT_DATABASE'] = database
+                    os.environ['REDSHIFT_USER'] = user
+                    os.environ['REDSHIFT_PASSWORD'] = password
+                    
+                    conn = get_redshift_connection()
+                    conn.close()
+                    
+                    setup_state.update_connection(host=host, database=database, schema='northwind', user=user, password=password)
+                    st.success("✅ Connection successful!")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Connection failed: {str(e)}")
+    return
     
     st.success(f"✅ Connected to: {state['connection']['host']}")
     
@@ -559,29 +559,29 @@ def show_option3_workflow(setup_state):
         schema = st.text_input("Schema", value=cached_schema)
         user = st.text_input("Username", value=cached_user)
         password = st.text_input("Password", type="password")
-            
-            if st.form_submit_button("Test Connection"):
-                if host and database and schema and user and password:
-                    try:
-                        os.environ['REDSHIFT_HOST'] = host
-                        os.environ['REDSHIFT_DATABASE'] = database
-                        os.environ['REDSHIFT_SCHEMA'] = schema
-                        os.environ['REDSHIFT_USER'] = user
-                        os.environ['REDSHIFT_PASSWORD'] = password
-                        
-                        conn = get_redshift_connection()
-                        cursor = conn.cursor()
-                        cursor.execute(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '{schema}'")
-                        table_count = cursor.fetchone()[0]
-                        conn.close()
-                        
-                        setup_state.update_connection(host=host, database=database, schema=schema, user=user, password=password)
-                        st.success(f"✅ Connection successful! Found {table_count} tables")
-                        time.sleep(1)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Connection failed: {str(e)}")
-        return
+        
+        if st.form_submit_button("Test Connection"):
+            if host and database and schema and user and password:
+                try:
+                    os.environ['REDSHIFT_HOST'] = host
+                    os.environ['REDSHIFT_DATABASE'] = database
+                    os.environ['REDSHIFT_SCHEMA'] = schema
+                    os.environ['REDSHIFT_USER'] = user
+                    os.environ['REDSHIFT_PASSWORD'] = password
+                    
+                    conn = get_redshift_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '{schema}'")
+                    table_count = cursor.fetchone()[0]
+                    conn.close()
+                    
+                    setup_state.update_connection(host=host, database=database, schema=schema, user=user, password=password)
+                    st.success(f"✅ Connection successful! Found {table_count} tables")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Connection failed: {str(e)}")
+    return
     
     st.success(f"✅ Connected to: {state['connection']['host']}")
     st.info(f"Schema: {state['connection']['schema']}")
