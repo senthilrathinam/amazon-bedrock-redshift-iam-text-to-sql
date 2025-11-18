@@ -1,5 +1,5 @@
 """
-GenAI Sales Analyst - Wizard-Based Setup v2.2
+GenAI Sales Analyst - Wizard-Based Setup v2
 """
 import streamlit as st
 import pandas as pd
@@ -46,118 +46,55 @@ def show_setup_wizard(setup_state):
             setup_state.update_state(setup_option=None)
             st.rerun()
         st.markdown("---")
-        
-        # Show selected option workflow
-        if state['setup_option'] == 1:
-            show_option1_workflow(setup_state)
-        elif state['setup_option'] == 2:
-            show_option2_workflow(setup_state)
-        elif state['setup_option'] == 3:
-            show_option3_workflow(setup_state)
-        return
     
-    # Landing page - show option choices
     st.markdown("Choose how you want to get started:")
     
-    col1, col2, col3 = st.columns(3)
+    # If no option selected, show choices
+    if not state['setup_option']:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("### Option 1")
+            st.markdown("**Create New Cluster**")
+            st.write("• Creates sales-analyst-cluster")
+            st.write("• Loads Northwind sample data")
+            st.write("• Uses .env credentials")
+            st.write("⏱️ ~10 minutes")
+            if st.button("Select Option 1", key="opt1", use_container_width=True):
+                setup_state.update_state(setup_option=1)
+                st.rerun()
+        
+        with col2:
+            st.markdown("### Option 2")
+            st.markdown("**Load to Existing Cluster**")
+            st.write("• Connect to your cluster")
+            st.write("• Load Northwind sample data")
+            st.write("• Keep your existing data")
+            st.write("⏱️ ~5 minutes")
+            if st.button("Select Option 2", key="opt2", use_container_width=True):
+                setup_state.update_state(setup_option=2)
+                st.rerun()
+        
+        with col3:
+            st.markdown("### Option 3")
+            st.markdown("**Use Existing Data**")
+            st.write("• Point to your database")
+            st.write("• No data loading needed")
+            st.write("• Query your own data")
+            st.write("⏱️ ~2 minutes")
+            if st.button("Select Option 3", key="opt3", use_container_width=True):
+                setup_state.update_state(setup_option=3)
+                st.rerun()
+        
+        return
     
-    with col1:
-        st.markdown("### Option 1")
-        st.markdown("**Create New Cluster**")
-        st.write("• Creates sales-analyst-cluster")
-        st.write("• Loads Northwind sample data")
-        st.write("• Uses .env credentials")
-        st.write("⏱️ ~10 minutes")
-        
-        # Check if cluster exists
-        cluster_exists = False
-        try:
-            import boto3
-            redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-            cluster_info = redshift.describe_clusters(ClusterIdentifier='sales-analyst-cluster')
-            if cluster_info['Clusters'][0]['ClusterStatus'] == 'available':
-                cluster_exists = True
-                st.info("✅ Cluster exists")
-        except:
-            pass
-        
-        if st.button("Select Option 1", key="opt1", use_container_width=True):
-            setup_state.update_state(setup_option=1)
-            st.rerun()
-        
-        # Show cleanup if cluster exists
-        if cluster_exists:
-            st.markdown("---")
-            if st.button("🗑️ Delete Cluster", key="delete_landing", use_container_width=True):
-                st.session_state.confirm_delete_landing = True
-            if st.session_state.get('confirm_delete_landing', False):
-                if st.button("⚠️ Confirm", key="confirm_landing", use_container_width=True):
-                    with st.spinner("Deleting..."):
-                        cleanup_option1_resources()
-                        setup_state.reset_state()
-                        st.session_state.confirm_delete_landing = False
-                        time.sleep(2)
-                        st.rerun()
-    
-    with col2:
-        st.markdown("### Option 2")
-        st.markdown("**Load to Existing Cluster**")
-        st.write("• Connect to your cluster")
-        st.write("• Load Northwind sample data")
-        st.write("• Keep your existing data")
-        st.write("⏱️ ~5 minutes")
-        if st.button("Select Option 2", key="opt2", use_container_width=True):
-            setup_state.update_state(setup_option=2)
-            st.rerun()
-    
-    with col3:
-        st.markdown("### Option 3")
-        st.markdown("**Use Existing Data**")
-        st.write("• Point to your database")
-        st.write("• No data loading needed")
-        st.write("• Query your own data")
-        st.write("⏱️ ~2 minutes")
-        if st.button("Select Option 3", key="opt3", use_container_width=True):
-            setup_state.update_state(setup_option=3)
-            st.rerun()
-
-
-def cleanup_option1_resources():
-    """Delete sales-analyst-cluster and all related resources."""
-    import boto3
-    region = os.getenv('AWS_REGION', 'us-east-1')
-    
-    try:
-        # Delete Redshift cluster
-        redshift = boto3.client('redshift', region_name=region)
-        try:
-            redshift.delete_cluster(
-                ClusterIdentifier='sales-analyst-cluster',
-                SkipFinalClusterSnapshot=True
-            )
-            st.info("🗑️ Deleting Redshift cluster...")
-        except:
-            pass
-        
-        # Terminate bastion host
-        ec2 = boto3.client('ec2', region_name=region)
-        try:
-            instances = ec2.describe_instances(
-                Filters=[
-                    {'Name': 'tag:Name', 'Values': ['sales-analyst-bastion']},
-                    {'Name': 'instance-state-name', 'Values': ['running', 'stopped']}
-                ]
-            )
-            for reservation in instances['Reservations']:
-                for instance in reservation['Instances']:
-                    ec2.terminate_instances(InstanceIds=[instance['InstanceId']])
-                    st.info(f"🗑️ Terminating bastion host {instance['InstanceId']}...")
-        except:
-            pass
-        
-        st.success("✅ Cleanup initiated. Resources will be deleted in a few minutes.")
-    except Exception as e:
-        st.error(f"❌ Cleanup error: {str(e)}")
+    # Show selected option workflow
+    if state['setup_option'] == 1:
+        show_option1_workflow(setup_state)
+    elif state['setup_option'] == 2:
+        show_option2_workflow(setup_state)
+    elif state['setup_option'] == 3:
+        show_option3_workflow(setup_state)
 
 
 def show_option1_workflow(setup_state):
@@ -166,75 +103,11 @@ def show_option1_workflow(setup_state):
     
     state = setup_state.get_state()
     
-    # Start SSM tunnel if using localhost and cluster is created
-    if state['cluster_created'] and state['connection']['host'] == 'localhost':
-        import subprocess
-        try:
-            result = subprocess.run(['pgrep', '-f', 'session-manager-plugin'], 
-                                  capture_output=True, text=True)
-            if not result.stdout.strip():
-                # Tunnel not running, start it
-                import boto3
-                ec2 = boto3.client('ec2', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-                redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-                
-                instances = ec2.describe_instances(
-                    Filters=[
-                        {'Name': 'tag:Name', 'Values': ['sales-analyst-bastion']},
-                        {'Name': 'instance-state-name', 'Values': ['running']}
-                    ]
-                )
-                
-                if instances['Reservations']:
-                    bastion_id = instances['Reservations'][0]['Instances'][0]['InstanceId']
-                    cluster_info = redshift.describe_clusters(ClusterIdentifier='sales-analyst-cluster')
-                    endpoint = cluster_info['Clusters'][0]['Endpoint']['Address']
-                    
-                    subprocess.Popen([
-                        'aws', 'ssm', 'start-session',
-                        '--target', bastion_id,
-                        '--document-name', 'AWS-StartPortForwardingSessionToRemoteHost',
-                        '--parameters', f'{{"host":["{endpoint}"],"portNumber":["5439"],"localPortNumber":["5439"]}}',
-                        '--region', os.getenv('AWS_REGION', 'us-east-1')
-                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    
-                    st.info("🔄 Starting SSM tunnel... Please wait.")
-                    time.sleep(5)
-                    st.rerun()
-        except:
-            pass
-    
-    # Step 1: Create Cluster (with check for existing)
+    # Step 1: Create Cluster
     st.markdown("### Step 1: Create Redshift Cluster")
     if state['cluster_created']:
         st.success(f"✅ Cluster created: {state['cluster_id']}")
     else:
-        # Check if cluster already exists in AWS
-        cluster_exists = False
-        endpoint = None
-        is_public = False
-        
-        try:
-            import boto3
-            redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-            cluster_info = redshift.describe_clusters(ClusterIdentifier='sales-analyst-cluster')
-            if cluster_info['Clusters'][0]['ClusterStatus'] == 'available':
-                cluster_exists = True
-                endpoint = cluster_info['Clusters'][0]['Endpoint']['Address']
-                is_public = cluster_info['Clusters'][0].get('PubliclyAccessible', False)
-        except:
-            pass
-        
-        if cluster_exists:
-            st.info("ℹ️ Cluster 'sales-analyst-cluster' already exists")
-            if st.button("✅ Use Existing Cluster", key="use_existing"):
-                host = endpoint if is_public else 'localhost'
-                setup_state.update_state(cluster_created=True, cluster_id='sales-analyst-cluster')
-                setup_state.update_connection(host=host, database='sales_analyst', schema='northwind', user='admin', password=os.getenv('REDSHIFT_PASSWORD', 'Awsuser123$'))
-                st.rerun()
-            return
-        
-        # Cluster doesn't exist, show create button
         st.info("Cluster will be created with credentials from .env file")
         if st.button("🚀 Create Cluster", key="create_cluster"):
             with st.spinner("Creating cluster... This takes ~10 minutes"):
@@ -244,88 +117,37 @@ def show_option1_workflow(setup_state):
                         cluster_id = endpoint.split('.')[0] if endpoint != 'localhost' else 'sales-analyst-cluster'
                         setup_state.update_state(cluster_created=True, cluster_id=cluster_id)
                         setup_state.update_connection(host=endpoint, database='sales_analyst', schema='northwind', user='admin', password=os.getenv('REDSHIFT_PASSWORD', 'Awsuser123$'))
+                        st.success("✅ Cluster created!")
                         st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
         return
     
-    # Step 2: Load Data (with check for existing)
+    # Step 2: Load Data
     st.markdown("### Step 2: Load Northwind Data")
     if state['data_loaded']:
         st.success("✅ Northwind data loaded")
     else:
-        # Check if Northwind already exists with retry
-        northwind_exists = False
-        check_error = None
-        
-        with st.spinner("Checking for existing Northwind data..."):
-            for attempt in range(3):
+        if st.button("📦 Load Northwind Data", key="load_data_opt1"):
+            progress_placeholder = st.empty()
+            with st.spinner("Loading Northwind database..."):
                 try:
                     conn_info = state['connection']
                     os.environ['REDSHIFT_HOST'] = conn_info['host']
                     os.environ['REDSHIFT_DATABASE'] = conn_info['database']
-                    os.environ['REDSHIFT_SCHEMA'] = 'northwind'
+                    os.environ['REDSHIFT_SCHEMA'] = conn_info['schema']
                     os.environ['REDSHIFT_USER'] = conn_info['user']
                     os.environ['REDSHIFT_PASSWORD'] = conn_info['password']
                     
-                    northwind_exists = check_northwind_exists()
-                    check_error = None
-                    break
+                    progress_placeholder.info("📥 Downloading Northwind database...")
+                    success = bootstrap_northwind(show_progress=True)
+                    if success:
+                        setup_state.update_state(data_loaded=True)
+                        progress_placeholder.success("✅ Data loaded!")
+                        time.sleep(1)
+                        st.rerun()
                 except Exception as e:
-                    check_error = str(e)
-                    if attempt < 2:
-                        time.sleep(2)
-                    continue
-        
-        if check_error:
-            st.error(f"❌ Cannot connect to database: {check_error}")
-            st.info("💡 Make sure SSM tunnel is running. Wait a moment and refresh the page.")
-            return
-        
-        if northwind_exists:
-            st.info("ℹ️ Northwind database already exists")
-            if st.button("✅ Skip to Indexing", key="skip_to_index"):
-                setup_state.update_state(data_loaded=True)
-                st.rerun()
-            return
-        
-        # Northwind doesn't exist, show load button
-        st.info("Northwind data not found. Click below to load sample data.")
-        if st.button("📦 Load Northwind Data", key="load_data_opt1"):
-            progress_placeholder = st.empty()
-            status_placeholder = st.empty()
-            
-            try:
-                conn_info = state['connection']
-                os.environ['REDSHIFT_HOST'] = conn_info['host']
-                os.environ['REDSHIFT_DATABASE'] = conn_info['database']
-                os.environ['REDSHIFT_SCHEMA'] = conn_info['schema']
-                os.environ['REDSHIFT_USER'] = conn_info['user']
-                os.environ['REDSHIFT_PASSWORD'] = conn_info['password']
-                
-                progress_placeholder.info("📥 Downloading Northwind database...")
-                
-                # Show loading progress
-                tables = ['customers', 'orders', 'order_details', 'products', 'categories', 
-                         'suppliers', 'employees', 'shippers', 'regions', 'territories']
-                
-                progress_bar = st.progress(0)
-                for i, table in enumerate(tables):
-                    status_placeholder.info(f"Loading table: {table}...")
-                    progress_bar.progress((i + 1) / len(tables))
-                    time.sleep(0.1)
-                
-                success = bootstrap_northwind(show_progress=True)
-                
-                if success:
-                    setup_state.update_state(data_loaded=True)
-                    progress_placeholder.success("✅ All tables loaded!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.error("❌ Failed to load data. Check connection and permissions.")
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
         return
     
     # Step 3: Index Schema
@@ -352,12 +174,10 @@ def show_option1_workflow(setup_state):
                     st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")
-                    return
-        else:
-            return  # Only return if button not clicked yet
+        return
     
     st.success("🎉 Setup complete!")
-    if st.button("Start Using App", type="primary"):
+    if st.button("Start Using App"):
         setup_state.mark_setup_complete()
         st.rerun()
 
@@ -471,17 +291,6 @@ def show_option2_workflow(setup_state):
                 
                 # Load data
                 progress_placeholder.info("📥 Downloading Northwind database...")
-                
-                # Show loading progress
-                tables = ['customers', 'orders', 'order_details', 'products', 'categories', 
-                         'suppliers', 'employees', 'shippers', 'regions', 'territories']
-                
-                progress_bar = st.progress(0)
-                for i, table in enumerate(tables):
-                    status_placeholder.info(f"Loading table: {table}...")
-                    progress_bar.progress((i + 1) / len(tables))
-                    time.sleep(0.1)
-                
                 success = bootstrap_northwind(show_progress=True)
                 
                 if success:
@@ -662,49 +471,6 @@ def show_main_app():
     state = setup_state.get_state()
     conn_info = state['connection']
     
-    # Start SSM tunnel if using localhost (private cluster)
-    if conn_info['host'] == 'localhost':
-        import subprocess
-        # Check if tunnel is already running
-        try:
-            result = subprocess.run(['pgrep', '-f', 'session-manager-plugin'], 
-                                  capture_output=True, text=True)
-            if not result.stdout.strip():
-                # Tunnel not running, start it
-                import boto3
-                ec2 = boto3.client('ec2', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-                redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-                
-                # Get bastion instance
-                instances = ec2.describe_instances(
-                    Filters=[
-                        {'Name': 'tag:Name', 'Values': ['sales-analyst-bastion']},
-                        {'Name': 'instance-state-name', 'Values': ['running']}
-                    ]
-                )
-                
-                if instances['Reservations']:
-                    bastion_id = instances['Reservations'][0]['Instances'][0]['InstanceId']
-                    
-                    # Get cluster endpoint
-                    cluster_info = redshift.describe_clusters(ClusterIdentifier='sales-analyst-cluster')
-                    endpoint = cluster_info['Clusters'][0]['Endpoint']['Address']
-                    
-                    # Start tunnel in background
-                    subprocess.Popen([
-                        'aws', 'ssm', 'start-session',
-                        '--target', bastion_id,
-                        '--document-name', 'AWS-StartPortForwardingSessionToRemoteHost',
-                        '--parameters', f'{{"host":["{endpoint}"],"portNumber":["5439"],"localPortNumber":["5439"]}}',
-                        '--region', os.getenv('AWS_REGION', 'us-east-1')
-                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    
-                    st.info("🔄 Starting SSM tunnel... Please wait 5 seconds and refresh.")
-                    time.sleep(5)
-                    st.rerun()
-        except:
-            pass
-    
     os.environ['REDSHIFT_HOST'] = conn_info['host']
     os.environ['REDSHIFT_DATABASE'] = conn_info['database']
     os.environ['REDSHIFT_SCHEMA'] = conn_info['schema']
@@ -749,24 +515,19 @@ def show_main_app():
         except Exception as e:
             st.error(f"Error loading tables: {str(e)}")
         
-        # Back to setup button
         st.markdown("---")
-        if st.button("⬅️ Back to Setup", key="back_to_setup"):
-            setup_state.update_state(setup_complete=False)
+        if st.button("🔄 Reset Setup"):
+            setup_state.reset_state()
             st.rerun()
     
     # Show sample queries for Northwind (Options 1 & 2)
     is_northwind = conn_info['schema'] == 'northwind'
     if is_northwind:
-        # Auto-collapse if query was just selected
-        expand_queries = not st.session_state.get('query_just_selected', False)
-        
-        with st.expander("💡 Sample Queries for Northwind Database", expanded=expand_queries):
+        with st.expander("💡 Sample Queries for Northwind Database", expanded=False):
             st.markdown("Click any query to use it:")
             for i, query in enumerate(NORTHWIND_SAMPLE_QUERIES):
                 if st.button(query, key=f"sample_{i}"):
                     st.session_state.selected_query = query
-                    st.session_state.query_just_selected = True
                     st.rerun()
     
     # Query interface
@@ -780,10 +541,6 @@ def show_main_app():
     if 'selected_query' in st.session_state:
         del st.session_state.selected_query
     
-    # Reset collapse flag after displaying
-    if 'query_just_selected' in st.session_state:
-        st.session_state.query_just_selected = False
-    
     if question:
         with st.spinner("Processing..."):
             try:
@@ -796,34 +553,9 @@ def show_main_app():
                 if "query_results" in result and result["query_results"]:
                     st.subheader("📊 Results")
                     results = result["query_results"]
-                    
                     if isinstance(results, list) and len(results) > 0:
-                        # Get column names from SQL query
-                        try:
-                            conn = get_redshift_connection()
-                            cursor = conn.cursor()
-                            cursor.execute(result["generated_sql"])
-                            column_names = [desc[0] for desc in cursor.description]
-                            cursor.close()
-                            conn.close()
-                            
-                            # Create DataFrame with proper column names
-                            df = pd.DataFrame(results, columns=column_names)
-                        except:
-                            # Fallback to default if column extraction fails
-                            df = pd.DataFrame(results)
-                        
+                        df = pd.DataFrame(results)
                         st.dataframe(df, use_container_width=True)
-                        
-                        # Download button
-                        csv = df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download as CSV",
-                            data=csv,
-                            file_name="query_results.csv",
-                            mime="text/csv",
-                            key="download_csv"
-                        )
                 
                 if "analysis" in result:
                     st.subheader("💡 Analysis")
@@ -841,17 +573,6 @@ def main():
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     .stDeployButton {display:none;}
-    
-    /* Better form input styling */
-    .stTextInput > div > div > input {
-        border: 2px solid #e0e0e0;
-        border-radius: 5px;
-        padding: 10px;
-    }
-    .stTextInput > div > div > input:focus {
-        border-color: #0066cc;
-        box-shadow: 0 0 0 1px #0066cc;
-    }
     </style>
     """, unsafe_allow_html=True)
     
@@ -864,6 +585,14 @@ def main():
         setup_state.reset_state()
         time.sleep(1)
         st.rerun()
+    
+    # Reset button in sidebar
+    with st.sidebar:
+        if st.button("🔄 Reset All Setup", key="reset_all"):
+            setup_state.reset_state()
+            st.success("Setup reset! Reloading...")
+            time.sleep(1)
+            st.rerun()
     
     if not setup_state.is_setup_complete():
         show_setup_wizard(setup_state)
