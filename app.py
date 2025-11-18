@@ -751,9 +751,17 @@ def show_main_app():
         
         # Back to setup button
         st.markdown("---")
-        if st.button("⬅️ Back to Setup", key="back_to_setup"):
-            setup_state.update_state(setup_complete=False)
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⬅️ Back to Setup", key="back_to_setup"):
+                setup_state.update_state(setup_complete=False)
+                st.rerun()
+        with col2:
+            if st.button("🔄 Reset All Setup", key="reset_all_setup"):
+                setup_state.reset_state()
+                st.success("Setup state reset successfully!")
+                time.sleep(1)
+                st.rerun()
     
     # Show sample queries for Northwind (Options 1 & 2)
     is_northwind = conn_info['schema'] == 'northwind'
