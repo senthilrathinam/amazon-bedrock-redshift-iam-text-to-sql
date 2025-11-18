@@ -120,6 +120,14 @@ def show_setup_wizard(setup_state):
         if st.button("Select Option 3", key="opt3", use_container_width=True):
             setup_state.update_state(setup_option=3)
             st.rerun()
+    
+    # Reset button for clearing stale state
+    st.markdown("---")
+    if st.button("🔄 Reset All Setup", key="reset_all_setup_landing", use_container_width=True):
+        setup_state.reset_state()
+        st.success("Setup state reset successfully!")
+        time.sleep(1)
+        st.rerun()
 
 
 def cleanup_option1_resources():
@@ -369,13 +377,17 @@ def show_option2_workflow(setup_state):
     state = setup_state.get_state()
     
     # Step 1: Configure Connection
-    if not state['connection']['host']:
-        st.markdown("### Step 1: Enter Cluster Details")
-        with st.form("cluster_config"):
-            host = st.text_input("Cluster Endpoint", placeholder="cluster.xxx.redshift.amazonaws.com")
-            database = st.text_input("Database", value="dev")
-            user = st.text_input("Username", value="awsuser")
-            password = st.text_input("Password", type="password")
+    st.markdown("### Step 1: Enter Cluster Details")
+    with st.form("cluster_config"):
+        # Pre-fill with cached values if available, but allow editing
+        cached_host = state['connection'].get('host', '')
+        cached_db = state['connection'].get('database', 'dev')
+        cached_user = state['connection'].get('user', 'awsuser')
+        
+        host = st.text_input("Cluster Endpoint", value=cached_host, placeholder="cluster.xxx.redshift.amazonaws.com")
+        database = st.text_input("Database", value=cached_db)
+        user = st.text_input("Username", value=cached_user)
+        password = st.text_input("Password", type="password")
             
             if st.form_submit_button("Test Connection"):
                 if host and database and user and password:
@@ -534,14 +546,19 @@ def show_option3_workflow(setup_state):
     state = setup_state.get_state()
     
     # Step 1: Configure Connection
-    if not state['connection']['host']:
-        st.markdown("### Step 1: Enter Connection Details")
-        with st.form("existing_config"):
-            host = st.text_input("Cluster Endpoint", placeholder="cluster.xxx.redshift.amazonaws.com")
-            database = st.text_input("Database", value="dev")
-            schema = st.text_input("Schema", value="public")
-            user = st.text_input("Username", value="awsuser")
-            password = st.text_input("Password", type="password")
+    st.markdown("### Step 1: Enter Connection Details")
+    with st.form("existing_config"):
+        # Pre-fill with cached values if available, but allow editing
+        cached_host = state['connection'].get('host', '')
+        cached_db = state['connection'].get('database', 'dev')
+        cached_schema = state['connection'].get('schema', 'public')
+        cached_user = state['connection'].get('user', 'awsuser')
+        
+        host = st.text_input("Cluster Endpoint", value=cached_host, placeholder="cluster.xxx.redshift.amazonaws.com")
+        database = st.text_input("Database", value=cached_db)
+        schema = st.text_input("Schema", value=cached_schema)
+        user = st.text_input("Username", value=cached_user)
+        password = st.text_input("Password", type="password")
             
             if st.form_submit_button("Test Connection"):
                 if host and database and schema and user and password:
@@ -751,17 +768,9 @@ def show_main_app():
         
         # Back to setup button
         st.markdown("---")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("⬅️ Back to Setup", key="back_to_setup"):
-                setup_state.update_state(setup_complete=False)
-                st.rerun()
-        with col2:
-            if st.button("🔄 Reset All Setup", key="reset_all_setup"):
-                setup_state.reset_state()
-                st.success("Setup state reset successfully!")
-                time.sleep(1)
-                st.rerun()
+        if st.button("⬅️ Back to Setup", key="back_to_setup"):
+            setup_state.update_state(setup_complete=False)
+            st.rerun()
     
     # Show sample queries for Northwind (Options 1 & 2)
     is_northwind = conn_info['schema'] == 'northwind'
