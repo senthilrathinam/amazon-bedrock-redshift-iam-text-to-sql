@@ -9,10 +9,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.bedrock.bedrock_helper import BedrockHelper
+from src.bedrock.bedrock_helper_iam import BedrockHelper
 from src.vector_store.faiss_manager import FAISSManager
 from src.graph.workflow import AnalysisWorkflow
-from src.utils.redshift_connector import get_redshift_connection, execute_query
+from src.utils.redshift_connector_iam import get_redshift_connection, execute_query
 from src.utils.northwind_bootstrapper import bootstrap_northwind, check_northwind_exists
 from src.utils.setup_state import SetupState
 from src.utils.redshift_cluster_manager import create_redshift_cluster

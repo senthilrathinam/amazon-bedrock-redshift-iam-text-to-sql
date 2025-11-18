@@ -15,9 +15,7 @@ def create_ssm_role():
     """Create IAM role for SSM access."""
     iam = boto3.client(
         'iam', 
-        region_name=os.getenv('AWS_REGION', 'us-east-1'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        region_name=os.getenv('AWS_REGION', 'us-east-1')
     )
     
     try:
@@ -70,9 +68,7 @@ def create_bastion_host():
     """Create EC2 bastion host for SSH tunnel."""
     ec2 = boto3.client(
         'ec2', 
-        region_name=os.getenv('AWS_REGION', 'us-east-1'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        region_name=os.getenv('AWS_REGION', 'us-east-1')
     )
     
     try:
@@ -175,9 +171,7 @@ sleep 30
         # Wait for SSM agent to be ready (silent)
         ssm = boto3.client(
             'ssm', 
-            region_name=os.getenv('AWS_REGION', 'us-east-1'),
-            aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-            aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+            region_name=os.getenv('AWS_REGION', 'us-east-1')
         )
         
         # Wait up to 10 minutes for SSM agent to connect (silent)
@@ -300,9 +294,7 @@ def create_ssm_tunnel(instance_id, redshift_host):
     # Test SSM connectivity
     ssm = boto3.client(
         'ssm', 
-        region_name=os.getenv('AWS_REGION', 'us-east-1'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        region_name=os.getenv('AWS_REGION', 'us-east-1')
     )
     try:
         response = ssm.describe_instance_information(
@@ -409,15 +401,11 @@ def create_redshift_cluster():
     
     redshift = boto3.client(
         'redshift', 
-        region_name=os.getenv('AWS_REGION', 'us-east-1'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        region_name=os.getenv('AWS_REGION', 'us-east-1')
     )
     ec2 = boto3.client(
         'ec2', 
-        region_name=os.getenv('AWS_REGION', 'us-east-1'),
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        region_name=os.getenv('AWS_REGION', 'us-east-1')
     )
     
     # Get cluster ID from REDSHIFT_HOST in .env or use default

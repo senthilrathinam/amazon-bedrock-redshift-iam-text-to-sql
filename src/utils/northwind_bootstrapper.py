@@ -9,7 +9,7 @@ import sqlite3
 import streamlit as st
 import traceback
 import psycopg2
-from .redshift_connector import get_redshift_connection
+from .redshift_connector_iam import get_redshift_connection
 
 DATABASE_NAME = "SALES_ANALYST"
 NORTHWIND_SCHEMA = "NORTHWIND"
