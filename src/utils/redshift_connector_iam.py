@@ -26,14 +26,18 @@ def get_redshift_connection():
     if host == 'localhost':
         host = '127.0.0.1'
     
-    # Connect to Redshift with timeout
+    # SSL configuration
+    ssl_mode = os.getenv('REDSHIFT_SSL_MODE', 'require')
+    
+    # Connect to Redshift with timeout and SSL
     conn = psycopg2.connect(
         host=host,
         port=port,
         database=database,
         user=user,
         password=password,
-        connect_timeout=30
+        connect_timeout=30,
+        sslmode=ssl_mode
     )
     
     return conn
