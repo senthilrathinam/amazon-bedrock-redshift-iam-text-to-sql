@@ -10,7 +10,7 @@ This is sample code demonstrating the use of Amazon Bedrock and Generative AI to
 ![Sales Analyst Demo](images/demo.gif)
 
 ## Goal of this POC
-The goal of this repo is to provide users the ability to use Amazon Bedrock and generative AI to ask natural language questions about sales performance, customer behavior, and business metrics. These questions are automatically transformed into optimized SQL queries against a private Amazon Redshift cluster. This repo is designed to work with automatically provisioned Amazon Redshift clusters and includes complete infrastructure automation, security hardening, and intelligent context retrieval.
+The goal of this repo is to provide users the ability to use Amazon Bedrock and generative AI to ask natural language questions about sales performance, customer behavior, and business metrics. These questions are automatically transformed into optimized SQL queries against a private Amazon Redshift cluster. This repo includes complete infrastructure automation, security hardening, and intelligent context retrieval.
 
 The architecture & flow of the POC is as follows:
 ![POC Architecture & Flow](images/architecture.png 'POC Architecture')
@@ -26,7 +26,7 @@ When a user interacts with the POC, the flow is as follows:
 
 4. **Intelligent SQL Generation**: Amazon Bedrock generates optimized SQL queries using the retrieved context, ensuring proper table joins and data type handling (`src/graph/workflow.py` - `generate_sql()`)
 
-5. **Secure Query Execution**: The SQL query is executed against the private Redshift cluster through a secure SSM tunnel via the EC2 bastion host (`src/utils/redshift_connector.py`)
+5. **Secure Query Execution**: The SQL query is executed against the private Redshift cluster through a secure SSM tunnel via the EC2 bastion host (`src/utils/redshift_connector_iam.py`)
 
 6. **Result Analysis**: The retrieved data is passed back to Amazon Bedrock for intelligent analysis and insight generation (`src/graph/workflow.py` - `analyze_results()`)
 
@@ -40,6 +40,7 @@ When a user interacts with the POC, the flow is as follows:
 
 2. [Python](https://www.python.org/downloads/) v3.11 or greater. The POC runs on Python.
 
+3. **IAM Authentication**: This project uses IAM role-based authentication instead of access keys for enhanced security. When deploying to EC2, ensure your instance has an IAM role with permissions for Bedrock, Redshift, EC2, and SSM.
 
 4. AWS account with permissions to create Redshift clusters, EC2 instances, VPCs, and IAM roles.
 
@@ -67,18 +68,18 @@ When a user interacts with the POC, the flow is as follows:
     
     * `requirements.txt` - All dependencies needed for the application
     * `app.py` - Main Streamlit application with UI components
-    * `src/bedrock/bedrock_helper.py` - Amazon Bedrock client wrapper
+    * `src/bedrock/bedrock_helper_iam.py` - Amazon Bedrock client wrapper with IAM authentication
     * `src/graph/workflow.py` - LangGraph-inspired AI workflow orchestration
     * `src/vector_store/faiss_manager.py` - FAISS vector store for semantic search
     * `src/utils/redshift_cluster_manager.py` - Automatic AWS infrastructure provisioning
-    * `src/utils/redshift_connector.py` - Secure database connection management
+    * `src/utils/redshift_connector_iam.py` - Secure database connection management with IAM
     * `src/utils/northwind_bootstrapper.py` - Automatic sample data loading
     * `src/config/settings.py` - Application configuration
     * `cleanup.py` - AWS resource cleanup script
 
 3. Open the repository in your favorite code editor. In the terminal, navigate to the POC's folder:
     ```bash
-    cd amazon-bedrock-amazon-redshift-text-to-sql-poc
+    cd amazon-bedrock-redshift-iam-text-to-sql
     ```
 
 4. Configure the Python virtual environment, activate it:
@@ -99,20 +100,27 @@ When a user interacts with the POC, the flow is as follows:
     python3 setup.py
     ```
 
-6. Create a `.env` file in the root folder. Replace the placeholders with your actual AWS credentials and save the file:
+6. Create a `.env` file in the root folder. Copy from `.env.example` and update as needed:
 
     ```bash
-    # AWS Configuration (Required)
-    AWS_REGION=us-east-1
-    AWS_ACCESS_KEY_ID=your_access_key_here
-    AWS_SECRET_ACCESS_KEY=your_secret_key_here
+    cp .env.example .env
+    ```
 
-    # Redshift Configuration (Auto-managed - only override if needed)
-    REDSHIFT_HOST=localhost
-    REDSHIFT_PORT=5439
-    REDSHIFT_DATABASE=sales_analyst
-    REDSHIFT_USER=admin
-    REDSHIFT_PASSWORD=Awsuser123$
+    The `.env` file should contain:
+
+    ```bash
+    # AWS Configuration
+    AWS_REGION=us-east-1
+
+    # Option 1 Default Cluster Configuration (Override if needed)
+    OPTION1_CLUSTER_ID=sales-analyst-cluster
+    OPTION1_DATABASE=sales_analyst
+    OPTION1_SCHEMA=northwind
+    OPTION1_USER=admin
+    OPTION1_PASSWORD=Awsuser123$
+
+    # SSL Configuration (Required for Redshift)
+    REDSHIFT_SSL_MODE=require
     ```
 
 7. If you are running this POC application from an Amazon EC2 instance, follow the below steps to configure the Security Group. This allows you to view the streamlit application from your local laptop. 
@@ -126,14 +134,27 @@ When a user interacts with the POC, the flow is as follows:
     streamlit run app.py
     ```
 
-9. **Automatic Setup**: On first run, the application will automatically:
-   - Create AWS infrastructure (Redshift cluster, EC2 bastion, VPC, security groups)
-   - Establish secure SSM tunnel connection
-   - Load the complete Northwind sales dataset
-   - Build vector store with schema metadata
-   - This process takes approximately 5-10 minutes
+9. **Setup Options**: The application provides three setup options:
 
-10. **Start Analyzing**: Once setup is complete, you can ask natural language questions like:
+   **Option 1: Create New Cluster**
+   - Creates a new private Redshift cluster with default settings from `.env`
+   - Automatically loads Northwind sample data
+   - Sets up secure SSM tunnel for connection
+   - Takes ~10 minutes for complete setup
+
+   **Option 2: Load to Existing Cluster**
+   - Connect to your existing Redshift cluster
+   - Loads Northwind sample data into your cluster
+   - Indexes the schema for AI queries
+   - Takes ~5 minutes
+
+   **Option 3: Use Existing Data**
+   - Connect to your existing Redshift cluster with your own data
+   - No data loading - uses your existing tables
+   - Indexes your schema for AI queries
+   - Takes ~2 minutes
+
+9. **Start Analyzing**: Once setup is complete, you can ask natural language questions like:
    - "What are the top 5 customers by order value?"
    - "Show me monthly sales trends for 1997"
    - "Which products have the highest profit margins?"
@@ -145,7 +166,7 @@ When a user interacts with the POC, the flow is as follows:
 To avoid ongoing AWS charges, run the cleanup script when finished:
 
 ```bash
-python cleanup.py
+python3 cleanup.py
 ```
 
 This will automatically remove all created AWS resources including the Redshift cluster, EC2 instance, and associated infrastructure.
@@ -156,6 +177,7 @@ This will automatically remove all created AWS resources including the Redshift 
 - **Context-Aware AI**: Semantic search for intelligent SQL generation
 - **Multi-Step AI Pipeline**: Query understanding → Context retrieval → SQL generation → Analysis
 - **Enterprise Security**: Private networking with secure tunnels
+- **IAM Authentication**: Enhanced security with role-based access (no access keys required)
 - **Extensible Design**: Modular architecture for easy customization
 
 
@@ -176,11 +198,11 @@ This will automatically remove all created AWS resources including the Redshift 
 ## Troubleshooting
 ### Common Issues
 - **"Permission denied" errors**:
-    - Verify your IAM user has all required policies attached
-    - Check your Access Key ID and Secret Access Key are correct
+    - Verify your EC2 instance has proper IAM role attached
+    - Check IAM role has permissions for Bedrock, Redshift, EC2, and SSM
 
 - **"Setup fails" or timeouts**:
-    - Run python cleanup.py first
+    - Run python3 cleanup.py first
     - Try a different AWS region in .env (us-west-2, eu-west-1)
     - Ensure you have sufficient AWS service limits
     - Wait for bastion host SSM agent to come online (can take 2-3 minutes)
@@ -193,9 +215,9 @@ This will automatically remove all created AWS resources including the Redshift 
     - Check that you saved the .env file after editing
 
 - **"App won't start**:
-    - Ensure Python 3.8+ is installed: python --version
+    - Ensure Python 3.8+ is installed: python3 --version
     - Install requirements: pip install -r requirements.txt
-    - Try: python -m streamlit run app.py
+    - Try: python3 -m streamlit run app.py
 
 - **""Connection failed" or "SSM tunnel failed"**:
     - The app uses a private Redshift cluster with bastion host for security
