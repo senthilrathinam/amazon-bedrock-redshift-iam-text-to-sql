@@ -443,10 +443,11 @@ def show_option2_workflow(setup_state):
                 if st.button("Skip to Indexing", key="skip_load"):
                     setup_state.update_state(data_loaded=True)
                     st.rerun()
-                return
+                return  # Don't show load button if Northwind exists
         except:
             pass
         
+        # Only show load button if Northwind doesn't exist
         if st.button("📦 Load Northwind Data", key="load_data_opt2"):
             progress_placeholder = st.empty()
             status_placeholder = st.empty()
