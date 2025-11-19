@@ -430,6 +430,7 @@ def show_option2_workflow(setup_state):
         st.success("✅ Northwind data already loaded")
     else:
         # Check if Northwind already exists
+        northwind_exists = False
         try:
             conn_info = state['connection']
             os.environ['REDSHIFT_HOST'] = conn_info['host']
@@ -438,14 +439,16 @@ def show_option2_workflow(setup_state):
             os.environ['REDSHIFT_USER'] = conn_info['user']
             os.environ['REDSHIFT_PASSWORD'] = conn_info['password']
             
-            if check_northwind_exists():
-                st.info("ℹ️ Northwind database already exists in this cluster")
-                if st.button("Skip to Indexing", key="skip_load"):
-                    setup_state.update_state(data_loaded=True)
-                    st.rerun()
-                return  # Don't show load button if Northwind exists
+            northwind_exists = check_northwind_exists()
         except:
             pass
+        
+        if northwind_exists:
+            st.info("ℹ️ Northwind database already exists in this cluster")
+            if st.button("Skip to Indexing", key="skip_load"):
+                setup_state.update_state(data_loaded=True)
+                st.rerun()
+            return  # Don't show load button if Northwind exists
         
         # Only show load button if Northwind doesn't exist
         if st.button("📦 Load Northwind Data", key="load_data_opt2"):
