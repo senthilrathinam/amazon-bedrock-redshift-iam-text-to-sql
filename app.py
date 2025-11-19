@@ -65,17 +65,18 @@ def show_setup_wizard(setup_state):
     with col1:
         st.markdown("### Option 1")
         st.markdown("**Create New Cluster**")
-        st.write("• Creates sales-analyst-cluster")
+        st.write(f"• Creates {os.getenv('OPTION1_CLUSTER_ID', 'sales-analyst-cluster')}")
         st.write("• Loads Northwind sample data")
         st.write("• Uses .env credentials")
         st.write("⏱️ ~10 minutes")
         
         # Check if cluster exists
+        cluster_id = os.getenv('OPTION1_CLUSTER_ID', 'sales-analyst-cluster')
         cluster_exists = False
         try:
             import boto3
             redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-            cluster_info = redshift.describe_clusters(ClusterIdentifier='sales-analyst-cluster')
+            cluster_info = redshift.describe_clusters(ClusterIdentifier=cluster_id)
             if cluster_info['Clusters'][0]['ClusterStatus'] == 'available':
                 cluster_exists = True
                 st.info("✅ Cluster exists")
@@ -132,16 +133,17 @@ def show_setup_wizard(setup_state):
 
 
 def cleanup_option1_resources():
-    """Delete sales-analyst-cluster and all related resources."""
+    """Delete Option 1 cluster and all related resources."""
     import boto3
     region = os.getenv('AWS_REGION', 'us-east-1')
+    cluster_id = os.getenv('OPTION1_CLUSTER_ID', 'sales-analyst-cluster')
     
     try:
         # Delete Redshift cluster
         redshift = boto3.client('redshift', region_name=region)
         try:
             redshift.delete_cluster(
-                ClusterIdentifier='sales-analyst-cluster',
+                ClusterIdentifier=cluster_id,
                 SkipFinalClusterSnapshot=True
             )
             st.info("🗑️ Deleting Redshift cluster...")
@@ -239,7 +241,13 @@ def show_option1_workflow(setup_state):
             if st.button("✅ Use Existing Cluster", key="use_existing"):
                 host = endpoint if is_public else 'localhost'
                 setup_state.update_state(cluster_created=True, cluster_id='sales-analyst-cluster')
-                setup_state.update_connection(host=host, database='sales_analyst', schema='northwind', user='admin', password=os.getenv('REDSHIFT_PASSWORD', 'Awsuser123$'))
+                setup_state.update_connection(
+                    host=host, 
+                    database=os.getenv('OPTION1_DATABASE', 'sales_analyst'), 
+                    schema=os.getenv('OPTION1_SCHEMA', 'northwind'), 
+                    user=os.getenv('OPTION1_USER', 'admin'), 
+                    password=os.getenv('OPTION1_PASSWORD', 'Awsuser123$')
+                )
                 st.rerun()
             return
         
@@ -250,9 +258,15 @@ def show_option1_workflow(setup_state):
                 try:
                     endpoint = create_redshift_cluster()
                     if endpoint:
-                        cluster_id = endpoint.split('.')[0] if endpoint != 'localhost' else 'sales-analyst-cluster'
+                        cluster_id = endpoint.split('.')[0] if endpoint != 'localhost' else os.getenv('OPTION1_CLUSTER_ID', 'sales-analyst-cluster')
                         setup_state.update_state(cluster_created=True, cluster_id=cluster_id)
-                        setup_state.update_connection(host=endpoint, database='sales_analyst', schema='northwind', user='admin', password=os.getenv('REDSHIFT_PASSWORD', 'Awsuser123$'))
+                        setup_state.update_connection(
+                            host=endpoint, 
+                            database=os.getenv('OPTION1_DATABASE', 'sales_analyst'), 
+                            schema=os.getenv('OPTION1_SCHEMA', 'northwind'), 
+                            user=os.getenv('OPTION1_USER', 'admin'), 
+                            password=os.getenv('OPTION1_PASSWORD', 'Awsuser123$')
+                        )
                         st.rerun()
                 except Exception as e:
                     st.error(f"❌ Error: {str(e)}")

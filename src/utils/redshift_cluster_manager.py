@@ -408,13 +408,8 @@ def create_redshift_cluster():
         region_name=os.getenv('AWS_REGION', 'us-east-1')
     )
     
-    # Get cluster ID from REDSHIFT_HOST in .env or use default
-    redshift_host = os.getenv('REDSHIFT_HOST', 'localhost')
-    if redshift_host and redshift_host != 'localhost' and redshift_host != 'NOT_SET':
-        # Extract cluster ID from endpoint (e.g., "cluster-name.xxx.region.redshift.amazonaws.com")
-        cluster_id = redshift_host.split('.')[0]
-    else:
-        cluster_id = 'sales-analyst-cluster'
+    # Get cluster ID from .env or use default
+    cluster_id = os.getenv('OPTION1_CLUSTER_ID', 'sales-analyst-cluster')
     
     # Start data download in background
     download_result = {'path': None}
@@ -554,9 +549,9 @@ def create_redshift_cluster():
         redshift.create_cluster(
             ClusterIdentifier=cluster_id,
             NodeType='ra3.xlplus',
-            MasterUsername='admin',
-            MasterUserPassword='Awsuser123$',
-            DBName='sales_analyst',
+            MasterUsername=os.getenv('OPTION1_USER', 'admin'),
+            MasterUserPassword=os.getenv('OPTION1_PASSWORD', 'Awsuser123$'),
+            DBName=os.getenv('OPTION1_DATABASE', 'sales_analyst'),
             ClusterType='single-node',
             PubliclyAccessible=False,  # PRIVATE SUBNET
             Port=5439,
