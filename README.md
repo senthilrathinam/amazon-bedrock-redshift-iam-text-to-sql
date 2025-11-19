@@ -83,7 +83,7 @@ When a user interacts with the POC, the flow is as follows:
 
 4. Configure the Python virtual environment, activate it:
     ```bash
-    python -m venv .venv
+    python3 -m venv .venv
     source .venv/bin/activate  # On Windows: .venv\Scripts\activate
     ```
 
