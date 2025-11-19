@@ -395,14 +395,15 @@ def show_option2_workflow(setup_state):
     state = setup_state.get_state()
     
     # Step 1: Configure Connection
-    st.markdown("### Step 1: Enter Cluster Details")
-    with st.form("cluster_config"):
-        host = st.text_input("Cluster Endpoint", placeholder="cluster.xxx.redshift.amazonaws.com")
-        database = st.text_input("Database", value="dev")
-        user = st.text_input("Username", value="awsuser")
-        password = st.text_input("Password", type="password")
-        
-        if st.form_submit_button("Test Connection"):
+    if not state['connection'].get('host'):
+        st.markdown("### Step 1: Enter Cluster Details")
+        with st.form("cluster_config"):
+            host = st.text_input("Cluster Endpoint", placeholder="cluster.xxx.redshift.amazonaws.com")
+            database = st.text_input("Database", value="dev")
+            user = st.text_input("Username", value="awsuser")
+            password = st.text_input("Password", type="password")
+            
+            if st.form_submit_button("Test Connection"):
                 if host and database and user and password:
                     try:
                         os.environ['REDSHIFT_HOST'] = host
@@ -559,15 +560,16 @@ def show_option3_workflow(setup_state):
     state = setup_state.get_state()
     
     # Step 1: Configure Connection
-    st.markdown("### Step 1: Enter Connection Details")
-    with st.form("existing_config"):
-        host = st.text_input("Cluster Endpoint", placeholder="cluster.xxx.redshift.amazonaws.com")
-        database = st.text_input("Database", value="dev")
-        schema = st.text_input("Schema", value="public")
-        user = st.text_input("Username", value="awsuser")
-        password = st.text_input("Password", type="password")
-        
-        if st.form_submit_button("Test Connection"):
+    if not state['connection'].get('host'):
+        st.markdown("### Step 1: Enter Connection Details")
+        with st.form("existing_config"):
+            host = st.text_input("Cluster Endpoint", placeholder="cluster.xxx.redshift.amazonaws.com")
+            database = st.text_input("Database", value="dev")
+            schema = st.text_input("Schema", value="public")
+            user = st.text_input("Username", value="awsuser")
+            password = st.text_input("Password", type="password")
+            
+            if st.form_submit_button("Test Connection"):
                 if host and database and schema and user and password:
                     try:
                         os.environ['REDSHIFT_HOST'] = host
