@@ -20,7 +20,10 @@ def get_redshift_connection():
     port = os.getenv('REDSHIFT_PORT', '5439')
     database = os.getenv('REDSHIFT_DATABASE', 'sales_analyst')
     user = os.getenv('REDSHIFT_USER', 'admin')
-    password = os.getenv('REDSHIFT_PASSWORD', 'Awsuser123$')
+    password = os.getenv('REDSHIFT_PASSWORD')
+    
+    if not password:
+        raise ValueError("REDSHIFT_PASSWORD must be set in .env file")
     
     # For localhost connections (SSM tunnel), force IPv4
     if host == 'localhost':

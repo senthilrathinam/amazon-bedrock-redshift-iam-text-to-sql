@@ -546,11 +546,15 @@ def create_redshift_cluster():
                 return cluster_endpoint
     except redshift.exceptions.ClusterNotFoundFault:
         # Create cluster in PRIVATE subnet (no public access)
+        password = os.getenv('OPTION1_PASSWORD')
+        if not password:
+            raise ValueError("OPTION1_PASSWORD must be set in .env file")
+            
         redshift.create_cluster(
             ClusterIdentifier=cluster_id,
             NodeType='ra3.xlplus',
             MasterUsername=os.getenv('OPTION1_USER', 'admin'),
-            MasterUserPassword=os.getenv('OPTION1_PASSWORD', 'Awsuser123$'),
+            MasterUserPassword=password,
             DBName=os.getenv('OPTION1_DATABASE', 'sales_analyst'),
             ClusterType='single-node',
             PubliclyAccessible=False,  # PRIVATE SUBNET

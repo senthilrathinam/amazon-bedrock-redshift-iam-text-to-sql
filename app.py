@@ -83,7 +83,7 @@ def show_setup_wizard(setup_state):
         except:
             pass
         
-        if st.button("Select Option 1", key="opt1", use_container_width=True):
+        if st.button("Select Option 1", key="opt1", width="stretch"):
             setup_state.reset_state()  # Clear any cached connection
             setup_state.update_state(setup_option=1)
             st.rerun()
@@ -91,10 +91,10 @@ def show_setup_wizard(setup_state):
         # Show cleanup if cluster exists
         if cluster_exists:
             st.markdown("---")
-            if st.button("🗑️ Delete Cluster", key="delete_landing", use_container_width=True):
+            if st.button("🗑️ Delete Cluster", key="delete_landing", width="stretch"):
                 st.session_state.confirm_delete_landing = True
             if st.session_state.get('confirm_delete_landing', False):
-                if st.button("⚠️ Confirm", key="confirm_landing", use_container_width=True):
+                if st.button("⚠️ Confirm", key="confirm_landing", width="stretch"):
                     with st.spinner("Deleting..."):
                         cleanup_option1_resources()
                         setup_state.reset_state()
@@ -109,7 +109,7 @@ def show_setup_wizard(setup_state):
         st.write("• Load Northwind sample data")
         st.write("• Keep your existing data")
         st.write("⏱️ ~5 minutes")
-        if st.button("Select Option 2", key="opt2", use_container_width=True):
+        if st.button("Select Option 2", key="opt2", width="stretch"):
             setup_state.reset_state()  # Clear any cached connection
             setup_state.update_state(setup_option=2)
             st.rerun()
@@ -121,14 +121,14 @@ def show_setup_wizard(setup_state):
         st.write("• No data loading needed")
         st.write("• Query your own data")
         st.write("⏱️ ~2 minutes")
-        if st.button("Select Option 3", key="opt3", use_container_width=True):
+        if st.button("Select Option 3", key="opt3", width="stretch"):
             setup_state.reset_state()  # Clear any cached connection
             setup_state.update_state(setup_option=3)
             st.rerun()
     
     # Reset button for clearing stale state
     st.markdown("---")
-    if st.button("🔄 Reset All Setup", key="reset_all_setup_landing", use_container_width=True):
+    if st.button("🔄 Reset All Setup", key="reset_all_setup_landing", width="stretch"):
         setup_state.reset_state()
         st.success("Setup state reset successfully!")
         time.sleep(1)
@@ -177,6 +177,14 @@ def cleanup_option1_resources():
 def show_option1_workflow(setup_state):
     """Option 1: Create new cluster."""
     st.markdown("## Option 1: Create New Cluster")
+    
+    # Validate required environment variables
+    password = os.getenv('OPTION1_PASSWORD')
+    if not password:
+        st.error("❌ Missing required environment variable: OPTION1_PASSWORD")
+        st.info("💡 Please set OPTION1_PASSWORD in your .env file and restart the application")
+        st.code("OPTION1_PASSWORD=YourSecurePassword123!", language="bash")
+        return
     
     state = setup_state.get_state()
     
@@ -249,7 +257,7 @@ def show_option1_workflow(setup_state):
                     database=os.getenv('OPTION1_DATABASE', 'sales_analyst'), 
                     schema=os.getenv('OPTION1_SCHEMA', 'northwind'), 
                     user=os.getenv('OPTION1_USER', 'admin'), 
-                    password=os.getenv('OPTION1_PASSWORD', 'Awsuser123$')
+                    password=os.getenv('OPTION1_PASSWORD')
                 )
                 st.rerun()
             return
@@ -268,7 +276,7 @@ def show_option1_workflow(setup_state):
                             database=os.getenv('OPTION1_DATABASE', 'sales_analyst'), 
                             schema=os.getenv('OPTION1_SCHEMA', 'northwind'), 
                             user=os.getenv('OPTION1_USER', 'admin'), 
-                            password=os.getenv('OPTION1_PASSWORD', 'Awsuser123$')
+                            password=os.getenv('OPTION1_PASSWORD')
                         )
                         st.rerun()
                 except Exception as e:
@@ -474,9 +482,7 @@ def show_option2_workflow(setup_state):
                     
                     import boto3
                     redshift = boto3.client('redshift', 
-                        region_name=os.getenv('AWS_REGION', 'us-east-1'),
-                        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-                        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'))
+                        region_name=os.getenv('AWS_REGION', 'us-east-1'))
                     
                     cluster_id = conn_info['host'].split('.')[0]
                     
@@ -584,7 +590,7 @@ def show_option3_workflow(setup_state):
                         
                         conn = get_redshift_connection()
                         cursor = conn.cursor()
-                        cursor.execute(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '{schema}'")
+                        cursor.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s", (schema,))
                         table_count = cursor.fetchone()[0]
                         conn.close()
                         
@@ -843,7 +849,7 @@ def show_main_app():
                             # Fallback to default if column extraction fails
                             df = pd.DataFrame(results)
                         
-                        st.dataframe(df, use_container_width=True)
+                        st.dataframe(df, width="stretch")
                         
                         # Download button
                         csv = df.to_csv(index=False).encode('utf-8')

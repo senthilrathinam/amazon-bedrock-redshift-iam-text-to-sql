@@ -7,7 +7,9 @@ This is sample code demonstrating the use of Amazon Bedrock and Generative AI to
 
 **Please Note: If you don&#39;t want to build this from scratch, Amazon Redshift now supports GenAI capabilities natively, more information on that can be found [here](https://aws.amazon.com/blogs/aws/amazon-redshift-adds-new-ai-capabilities-to-boost-efficiency-and-productivity/).**
 
-![Sales Analyst Demo](images/demo.gif)
+![Setup Options](images/all-options.png)
+
+![Query Results](images/option-1-output-1.png)
 
 ## Goal of this POC
 The goal of this repo is to provide users the ability to use Amazon Bedrock and generative AI to ask natural language questions about sales performance, customer behavior, and business metrics. These questions are automatically transformed into optimized SQL queries against a private Amazon Redshift cluster. This repo includes complete infrastructure automation, security hardening, and intelligent context retrieval.
@@ -40,7 +42,15 @@ When a user interacts with the POC, the flow is as follows:
 
 2. [Python](https://www.python.org/downloads/) v3.11 or greater. The POC runs on Python.
 
-3. **IAM Authentication**: This project uses IAM role-based authentication instead of access keys for enhanced security. When deploying to EC2, ensure your instance has an IAM role with permissions for Bedrock, Redshift, EC2, and SSM.
+3. **AWS Authentication**: This project uses flexible AWS authentication that works in multiple environments:
+   - **EC2 Instance**: Automatically uses IAM role attached to the instance (no credentials needed)
+   - **Local Machine**: Uses AWS CLI credentials from `~/.aws/credentials` (run `aws configure`)
+   - **Required AWS Permissions**: 
+     - Bedrock: `bedrock:InvokeModel`, `bedrock-runtime:InvokeModel`
+     - Redshift: `redshift:*` (for cluster management)
+     - EC2: `ec2:*` (for bastion host)
+     - SSM: `ssm:*` (for secure tunneling)
+     - IAM: `iam:*` (for role creation)
 
 4. AWS account with permissions to create Redshift clusters, EC2 instances, VPCs, and IAM roles.
 
@@ -100,7 +110,37 @@ When a user interacts with the POC, the flow is as follows:
     python3 setup.py
     ```
 
-6. Create a `.env` file in the root folder. Copy from `.env.example` and update as needed:
+6. **Configure AWS Credentials** (Environment-specific):
+
+   **Option A: Running on AWS EC2 Instance**
+   
+   Attach an IAM role to your EC2 instance with the required permissions listed above.
+   
+   No additional credential configuration needed - the application automatically uses the instance's IAM role.
+   
+   **Option B: Running on Local Machine (Windows/Mac/Linux)**
+   
+   Configure AWS CLI with your credentials:
+   ```bash
+   aws configure
+   ```
+   
+   Enter your AWS credentials when prompted:
+   ```
+   AWS Access Key ID: YOUR_ACCESS_KEY
+   AWS Secret Access Key: YOUR_SECRET_KEY
+   Default region name: us-east-1
+   Default output format: json
+   ```
+   
+   This creates `~/.aws/credentials` file that the application automatically uses.
+   
+   Verify your credentials:
+   ```bash
+   aws sts get-caller-identity
+   ```
+
+7. Create a `.env` file in the root folder. Copy from `.env.example` and update as needed:
 
     ```bash
     cp .env.example .env
@@ -112,29 +152,36 @@ When a user interacts with the POC, the flow is as follows:
     # AWS Configuration
     AWS_REGION=us-east-1
 
-    # Option 1 Default Cluster Configuration (Override if needed)
+    # Option 1 Default Cluster Configuration (Required for Option 1)
     OPTION1_CLUSTER_ID=sales-analyst-cluster
     OPTION1_DATABASE=sales_analyst
     OPTION1_SCHEMA=northwind
     OPTION1_USER=admin
-    OPTION1_PASSWORD=Awsuser123$
+    OPTION1_PASSWORD=YourSecurePassword123!
 
     # SSL Configuration (Required for Redshift)
     REDSHIFT_SSL_MODE=require
     ```
 
-7. If you are running this POC application from an Amazon EC2 instance, follow the below steps to configure the Security Group. This allows you to view the streamlit application from your local laptop. 
+    ⚠️ **Important**: 
+    - Change `OPTION1_PASSWORD` to a secure password (required for Option 1)
+    - Password must meet AWS Redshift requirements: 8-64 characters, at least one uppercase, one lowercase, and one number
+    - Never commit `.env` file to version control
+
+8. **EC2-Specific Configuration** (Skip if running locally):
+   
+   If running on an Amazon EC2 instance, configure the Security Group to access the Streamlit UI from your browser: 
 
     - Go to EC2 Console → Security Groups
     - Edit your EC2's security group
     - Add inbound rule: Port 8501, Source: Your IP (or 0.0.0.0/0 for public access)
 
-8. Start the application from your terminal:
+9. Start the application from your terminal:
     ```bash
     streamlit run app.py
     ```
 
-9. **Setup Options**: The application provides three setup options:
+10. **Setup Options**: The application provides three setup options:
 
    **Option 1: Create New Cluster**
    - Creates a new private Redshift cluster with default settings from `.env`
@@ -154,7 +201,7 @@ When a user interacts with the POC, the flow is as follows:
    - Indexes your schema for AI queries
    - Takes ~2 minutes
 
-9. **Start Analyzing**: Once setup is complete, you can ask natural language questions like:
+11. **Start Analyzing**: Once setup is complete, you can ask natural language questions like:
    - "What are the top 5 customers by order value?"
    - "Show me monthly sales trends for 1997"
    - "Which products have the highest profit margins?"
@@ -177,7 +224,8 @@ This will automatically remove all created AWS resources including the Redshift 
 - **Context-Aware AI**: Semantic search for intelligent SQL generation
 - **Multi-Step AI Pipeline**: Query understanding → Context retrieval → SQL generation → Analysis
 - **Enterprise Security**: Private networking with secure tunnels
-- **IAM Authentication**: Enhanced security with role-based access (no access keys required)
+- **Flexible Authentication**: Works seamlessly on EC2 (IAM role) or local machines (AWS CLI credentials)
+- **No Hardcoded Credentials**: Uses AWS credential chain for secure authentication
 - **Extensible Design**: Modular architecture for easy customization
 
 
@@ -207,19 +255,23 @@ This will automatically remove all created AWS resources including the Redshift 
     - Ensure you have sufficient AWS service limits
     - Wait for bastion host SSM agent to come online (can take 2-3 minutes)
 
-- **"Credentials not found"**:
+- **"Credentials not found" or "Unable to locate credentials"**:
+    - **On EC2**: Verify IAM role is attached to instance: `aws sts get-caller-identity`
+    - **On Local Machine**: Run `aws configure` to set up credentials
+    - Verify credentials work: `aws bedrock list-foundation-models --region us-east-1`
+    - Ensure `.env` file has `AWS_REGION` set correctly
 
-    - Make sure you copied .env.example to .env: cp .env.example .env
-    - Make sure .env file is in the same directory as app.py
-    - Verify no extra spaces in your credential values
-    - Check that you saved the .env file after editing
+- **"OPTION1_PASSWORD must be set" error (Option 1 only)**:
+    - Open `.env` file and set `OPTION1_PASSWORD=YourSecurePassword123!`
+    - Password must be 8-64 characters with uppercase, lowercase, and number
+    - Restart the application after updating `.env`
 
-- **"App won't start**:
-    - Ensure Python 3.8+ is installed: python3 --version
+- **"App won't start"**:
+    - Ensure Python 3.11+ is installed: python3 --version
     - Install requirements: pip install -r requirements.txt
     - Try: python3 -m streamlit run app.py
 
-- **""Connection failed" or "SSM tunnel failed"**:
+- **"Connection failed" or "SSM tunnel failed"**:
     - The app uses a private Redshift cluster with bastion host for security
     - Connection goes through localhost:5439 via SSM tunnel
     - If connection fails, wait 2-3 minutes for SSM agent to initialize
@@ -234,6 +286,31 @@ This will automatically remove all created AWS resources including the Redshift 
 - Check AWS CloudFormation console for detailed error messages
 - Review AWS costs in Billing console
 - Ensure your AWS account has no service limits blocking resource creation
+
+
+## ⚠️ Important: Proof of Concept
+
+**This is a Proof of Concept (POC) for demonstration purposes.**
+
+This application demonstrates the art of possibility with Amazon Bedrock and Redshift. While it includes security best practices like IAM authentication and private networking, it is designed for learning and experimentation.
+
+**Before using in production environments:**
+- Replace `.env` passwords with AWS Secrets Manager
+- Add input validation and rate limiting for user queries
+- Enable SSL certificate validation (`verify-full`) for Redshift connections
+- Review and apply principle of least privilege to IAM permissions
+- Implement comprehensive logging and monitoring
+- Add authentication and authorization for the Streamlit interface
+- Conduct a full security audit and penetration testing
+- Review AWS Well-Architected Framework guidelines
+
+**Current Security Features (POC-appropriate):**
+- ✅ IAM role-based authentication (no hardcoded AWS keys)
+- ✅ Private Redshift cluster with no public access
+- ✅ Secure SSM tunneling through bastion host
+- ✅ Parameterized SQL queries to prevent injection
+- ✅ Environment variables for configuration
+- ✅ `.env` file excluded from version control
 
 
 ## How-To Guide

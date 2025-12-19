@@ -28,8 +28,6 @@ class BedrockHelper:
             service_name='bedrock-runtime',
             region_name=region_name
         )
-        
-        print(f"✅ Initialized Bedrock client with IAM role in region: {region_name}")
     
     def invoke_model(self, 
                     prompt: str, 
