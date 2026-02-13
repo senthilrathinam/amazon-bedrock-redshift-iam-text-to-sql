@@ -4,21 +4,10 @@ UI components for the GenAI Sales Analyst application.
 import streamlit as st
 import pandas as pd
 import altair as alt
-from PIL import Image
-import os
-from ..config.settings import IMAGES_FOLDER
 
 
 def display_header():
-    """
-    Display the application header with logo and title.
-    """
-    # Load LendingTree logo if available
-    logo_path = os.path.join(IMAGES_FOLDER, "lendingtree_Logo.png")
-    if os.path.exists(logo_path):
-        lendingtree_logo = Image.open(logo_path)
-        st.image(lendingtree_logo, use_column_width=False, width=300)
-
+    """Display the application header."""
     st.markdown('<hr style="border:2px solid #0A74DA;margin:10px 0;">', unsafe_allow_html=True)
     st.markdown(
         '<h1 style="color:#52247F;text-align:left;">GenAI Sales Analyst <span style="color:blue; font-style:italic; font-size:20px">(Powered by Amazon Bedrock©)</span></h1>',

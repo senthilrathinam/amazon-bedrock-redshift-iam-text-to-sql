@@ -5,6 +5,7 @@ import boto3
 import json
 import os
 from typing import List, Dict, Any, Optional
+from src.config.settings import DEFAULT_MODEL_ID
 
 
 class BedrockHelper:
@@ -13,17 +14,9 @@ class BedrockHelper:
     """
     
     def __init__(self, region_name: str = None):
-        """
-        Initialize the Bedrock helper with IAM role authentication.
-        
-        Args:
-            region_name: AWS region name (defaults to instance metadata or us-east-1)
-        """
-        # Get region from environment or instance metadata
         if not region_name:
             region_name = os.getenv('AWS_REGION') or os.getenv('AWS_DEFAULT_REGION') or 'us-east-1'
         
-        # Use default credentials (IAM role from EC2 instance)
         self.bedrock_runtime = boto3.client(
             service_name='bedrock-runtime',
             region_name=region_name
@@ -31,21 +24,12 @@ class BedrockHelper:
     
     def invoke_model(self, 
                     prompt: str, 
-                    model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0",
+                    model_id: str = None,
                     max_tokens: int = 4096,
                     temperature: float = 0.7) -> str:
-        """
-        Invoke a Bedrock model with a prompt.
+        if not model_id:
+            model_id = DEFAULT_MODEL_ID
         
-        Args:
-            prompt: Input prompt text
-            model_id: Bedrock model ID
-            max_tokens: Maximum tokens to generate
-            temperature: Temperature for generation
-            
-        Returns:
-            Model response text
-        """
         body = json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": max_tokens,
@@ -70,18 +54,9 @@ class BedrockHelper:
             raise
     
     def get_embeddings(self, text: str) -> List[float]:
-        """
-        Get embeddings for a text using Bedrock.
-        
-        Args:
-            text: Input text
-            
-        Returns:
-            List of embedding values
-        """
         try:
             response = self.bedrock_runtime.invoke_model(
-                modelId="amazon.titan-embed-text-v1",
+                modelId="amazon.titan-embed-text-v2:0",
                 body=json.dumps({"inputText": text})
             )
             response_body = json.loads(response['body'].read())

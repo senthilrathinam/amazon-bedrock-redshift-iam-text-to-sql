@@ -638,7 +638,7 @@ def show_option3_workflow(setup_state):
 
 
 def load_metadata(vector_store, schema):
-    """Load and index schema metadata with proper schema qualification."""
+    """Load and index schema metadata as per-table documents for selective retrieval."""
     database = os.getenv('REDSHIFT_DATABASE', 'sales_analyst')
     
     tables_query = f"""
@@ -653,11 +653,33 @@ def load_metadata(vector_store, schema):
     if not tables_result:
         raise Exception(f"No tables found in schema '{schema}'")
     
-    # Enhanced schema description with explicit schema qualification
-    schema_parts = [f"Database: {database}, Schema: {schema}\n"]
-    schema_parts.append(f"IMPORTANT: Always use schema-qualified table names: {schema}.tablename\n")
+    # Build per-table documents for selective retrieval
+    texts = []
+    metadatas = []
+    table_names = [t[0] for t in tables_result]
     
-    for (table_name,) in tables_result:
+    # Get foreign key relationships
+    fk_query = f"""
+        SELECT tc.table_name, kcu.column_name, 
+               ccu.table_name AS foreign_table, ccu.column_name AS foreign_column
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
+        JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = '{schema}'
+    """
+    try:
+        fk_result = execute_query(fk_query)
+    except:
+        fk_result = []
+    
+    # Build FK lookup: table -> list of relationships
+    fk_map = {}
+    for row in (fk_result or []):
+        tbl, col, ftbl, fcol = row
+        fk_map.setdefault(tbl, []).append(f"{col} -> {schema}.{ftbl}.{fcol}")
+        fk_map.setdefault(ftbl, []).append(f"Referenced by {schema}.{tbl}.{col}")
+    
+    for table_name in table_names:
         columns_query = f"""
             SELECT column_name, data_type
             FROM information_schema.columns 
@@ -668,14 +690,22 @@ def load_metadata(vector_store, schema):
         columns_result = execute_query(columns_query)
         
         if columns_result:
-            columns_list = [f"{col_name} ({data_type})" for col_name, data_type in columns_result]
-            columns_str = ", ".join(columns_list)
-            # Include schema in table description
-            schema_parts.append(f"Table: {schema}.{table_name}\nColumns: {columns_str}\n")
+            columns_str = ", ".join([f"{c[0]} ({c[1]})" for c in columns_result])
+            relationships = fk_map.get(table_name, [])
+            rel_str = f"\nRelationships: {'; '.join(relationships)}" if relationships else ""
+            
+            text = (f"Schema: {schema}, Table: {schema}.{table_name}\n"
+                    f"Columns: {columns_str}{rel_str}")
+            texts.append(text)
+            metadatas.append({'database': database, 'schema': schema, 
+                            'table': table_name, 'type': 'table'})
     
-    schema_text = "\n".join(schema_parts)
-    texts = [schema_text]
-    metadatas = [{'database': database, 'schema': schema, 'type': 'schema'}]
+    # Add overview document for broad questions
+    overview = (f"Database: {database}, Schema: {schema}\n"
+                f"Available tables: {', '.join([schema + '.' + t for t in table_names])}\n"
+                f"IMPORTANT: Always use schema-qualified table names: {schema}.tablename")
+    texts.append(overview)
+    metadatas.append({'database': database, 'schema': schema, 'type': 'overview'})
     
     embeddings = []
     for text in texts:
