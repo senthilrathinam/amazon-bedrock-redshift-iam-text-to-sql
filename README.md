@@ -228,6 +228,22 @@ This will automatically remove all created AWS resources including the Redshift 
 - **No Hardcoded Credentials**: Uses AWS credential chain for secure authentication
 - **Extensible Design**: Modular architecture for easy customization
 
+## Bastion Host & SSM Tunnel
+
+The Redshift cluster is created in a **private subnet with no public access**. To connect, the application automatically creates an EC2 bastion host (`t3.micro`) and establishes an SSM port-forwarding tunnel:
+
+```
+Your Machine (localhost:5439) → SSM Tunnel → EC2 Bastion → Private Redshift Cluster
+```
+
+**What you need to know:**
+- **Option 1 (Create New Cluster)** automatically provisions the bastion host during setup
+- **Options 2 & 3** create a bastion if your existing cluster is private (not publicly accessible)
+- The bastion requires the **AWS Session Manager plugin** installed on your local machine. The setup script installs it automatically, but if it fails, install manually from [here](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+- The bastion is a `t3.micro` EC2 instance — it incurs standard EC2 charges while running
+- If the bastion instance is **stopped** (e.g., manually or by AWS), the application will not be able to connect to Redshift. Restart it from the EC2 console or run: `aws ec2 start-instances --instance-ids <bastion-instance-id>`
+- Run `python3 cleanup.py` when finished to remove the bastion and all other created resources
+
 
 ### Built with:
 

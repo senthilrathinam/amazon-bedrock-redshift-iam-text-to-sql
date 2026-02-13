@@ -715,12 +715,20 @@ def show_main_app():
                 instances = ec2.describe_instances(
                     Filters=[
                         {'Name': 'tag:Name', 'Values': ['sales-analyst-bastion']},
-                        {'Name': 'instance-state-name', 'Values': ['running']}
+                        {'Name': 'instance-state-name', 'Values': ['running', 'stopped']}
                     ]
                 )
                 
                 if instances['Reservations']:
-                    bastion_id = instances['Reservations'][0]['Instances'][0]['InstanceId']
+                    instance = instances['Reservations'][0]['Instances'][0]
+                    bastion_id = instance['InstanceId']
+                    
+                    # Start bastion if stopped
+                    if instance['State']['Name'] == 'stopped':
+                        st.info("🔄 Starting bastion host (was stopped)...")
+                        ec2.start_instances(InstanceIds=[bastion_id])
+                        ec2.get_waiter('instance_running').wait(InstanceIds=[bastion_id])
+                        time.sleep(30)  # Wait for SSM agent
                     
                     # Get cluster endpoint
                     cluster_info = redshift.describe_clusters(ClusterIdentifier='sales-analyst-cluster')
