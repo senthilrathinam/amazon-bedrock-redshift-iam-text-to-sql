@@ -13,26 +13,12 @@ load_dotenv()
 from src.bedrock.bedrock_helper_iam import BedrockHelper
 from src.vector_store.faiss_manager import FAISSManager
 from src.graph.workflow import AnalysisWorkflow
-from src.utils.redshift_connector_iam import get_redshift_connection, execute_query
+from src.utils.redshift_connector_iam import execute_query, execute_query_with_columns
 from src.utils.northwind_bootstrapper import bootstrap_northwind, check_northwind_exists
 from src.utils.setup_state import SetupState
 from src.utils.redshift_cluster_manager import create_redshift_cluster
 import numpy as np
 
-
-# Sample queries for Northwind database
-NORTHWIND_SAMPLE_QUERIES = [
-    "What are the top 10 customers by total order value?",
-    "Which products generate the most revenue?",
-    "What's the average order value by country?",
-    "Which product categories sell the most?",
-    "What are the top 5 most expensive products?",
-    "How many orders come from each country?",
-    "Which employees process the most orders?",
-    "What's the monthly sales trend?",
-    "Which suppliers provide the most products?",
-    "What's the average discount given per product category?"
-]
 
 
 def show_setup_wizard(setup_state):
@@ -419,8 +405,9 @@ def show_option2_workflow(setup_state):
                         os.environ['REDSHIFT_USER'] = user
                         os.environ['REDSHIFT_PASSWORD'] = password
                         
-                        conn = get_redshift_connection()
-                        conn.close()
+                        from src.utils.redshift_connector_iam import _reset_pool
+                        _reset_pool()
+                        execute_query("SELECT 1")
                         
                         setup_state.update_connection(host=host, database=database, schema='northwind', user=user, password=password)
                         st.success("✅ Connection successful!")
@@ -474,8 +461,9 @@ def show_option2_workflow(setup_state):
                 # Check if cluster is private
                 status_placeholder.info("🔍 Checking cluster accessibility...")
                 try:
-                    conn = get_redshift_connection()
-                    conn.close()
+                    from src.utils.redshift_connector_iam import _reset_pool
+                    _reset_pool()
+                    execute_query("SELECT 1")
                     status_placeholder.success("✅ Direct connection successful")
                 except:
                     status_placeholder.warning("⚠️ Setting up secure connection...")
@@ -573,11 +561,11 @@ def show_option3_workflow(setup_state):
     if not state['connection'].get('host'):
         st.markdown("### Step 1: Enter Connection Details")
         with st.form("existing_config"):
-            host = st.text_input("Cluster Endpoint", placeholder="cluster.xxx.redshift.amazonaws.com")
-            database = st.text_input("Database", value="dev")
-            schema = st.text_input("Schema", value="public")
-            user = st.text_input("Username", value="awsuser")
-            password = st.text_input("Password", type="password")
+            host = st.text_input("Cluster Endpoint", value=os.getenv('OPTION3_HOST', ''), placeholder="cluster.xxx.redshift.amazonaws.com")
+            database = st.text_input("Database", value=os.getenv('OPTION3_DATABASE', 'dev'))
+            schema = st.text_input("Schema", value=os.getenv('OPTION3_SCHEMA', 'public'))
+            user = st.text_input("Username", value=os.getenv('OPTION3_USER', 'awsuser'))
+            password = st.text_input("Password", type="password", value=os.getenv('OPTION3_PASSWORD', ''))
             
             if st.form_submit_button("Test Connection"):
                 if host and database and schema and user and password:
@@ -588,11 +576,11 @@ def show_option3_workflow(setup_state):
                         os.environ['REDSHIFT_USER'] = user
                         os.environ['REDSHIFT_PASSWORD'] = password
                         
-                        conn = get_redshift_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s", (schema,))
-                        table_count = cursor.fetchone()[0]
-                        conn.close()
+                        from src.utils.redshift_connector_iam import _reset_pool
+                        _reset_pool()
+                        
+                        result = execute_query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s", (schema,))
+                        table_count = result[0][0]
                         
                         setup_state.update_connection(host=host, database=database, schema=schema, user=user, password=password)
                         st.success(f"✅ Connection successful! Found {table_count} tables")
@@ -638,41 +626,35 @@ def show_option3_workflow(setup_state):
 
 
 def load_metadata(vector_store, schema):
-    """Load and index schema metadata as per-table documents for selective retrieval."""
+    """Load and index schema metadata as per-table documents for selective retrieval.
+    Enriches with COMMENT ON metadata (business glossary) when available."""
     database = os.getenv('REDSHIFT_DATABASE', 'sales_analyst')
     
-    tables_query = f"""
-        SELECT table_name 
-        FROM information_schema.tables 
-        WHERE table_schema = '{schema}' 
-        AND table_type = 'BASE TABLE'
-        ORDER BY table_name
-    """
-    tables_result = execute_query(tables_query)
+    tables_result = execute_query(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = %s AND table_type = 'BASE TABLE' ORDER BY table_name",
+        (schema,)
+    )
     
     if not tables_result:
         raise Exception(f"No tables found in schema '{schema}'")
     
-    # Build per-table documents for selective retrieval
     texts = []
     metadatas = []
     table_names = [t[0] for t in tables_result]
     
     # Get foreign key relationships
-    fk_query = f"""
-        SELECT tc.table_name, kcu.column_name, 
-               ccu.table_name AS foreign_table, ccu.column_name AS foreign_column
-        FROM information_schema.table_constraints tc
-        JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-        JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
-        WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = '{schema}'
-    """
     try:
-        fk_result = execute_query(fk_query)
+        fk_result = execute_query(
+            "SELECT tc.table_name, kcu.column_name, ccu.table_name, ccu.column_name "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name "
+            "JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name "
+            "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = %s",
+            (schema,)
+        )
     except:
         fk_result = []
     
-    # Build FK lookup: table -> list of relationships
     fk_map = {}
     for row in (fk_result or []):
         tbl, col, ftbl, fcol = row
@@ -680,21 +662,46 @@ def load_metadata(vector_store, schema):
         fk_map.setdefault(ftbl, []).append(f"Referenced by {schema}.{tbl}.{col}")
     
     for table_name in table_names:
-        columns_query = f"""
-            SELECT column_name, data_type
-            FROM information_schema.columns 
-            WHERE table_schema = '{schema}' 
-            AND table_name = '{table_name}'
-            ORDER BY ordinal_position
-        """
-        columns_result = execute_query(columns_query)
+        columns_result = execute_query(
+            "SELECT c.column_name, c.data_type, d.description "
+            "FROM information_schema.columns c "
+            "LEFT JOIN (SELECT cl.oid, cl.relname, ns.nspname FROM pg_catalog.pg_class cl "
+            "JOIN pg_catalog.pg_namespace ns ON cl.relnamespace = ns.oid WHERE cl.relkind = 'r') t "
+            "ON t.relname = c.table_name AND t.nspname = c.table_schema "
+            "LEFT JOIN pg_catalog.pg_description d ON t.oid = d.objoid AND d.objsubid = c.ordinal_position "
+            "WHERE c.table_schema = %s AND c.table_name = %s ORDER BY c.ordinal_position",
+            (schema, table_name)
+        )
+        
+        try:
+            tc_result = execute_query(
+                "SELECT d.description FROM pg_catalog.pg_class c "
+                "JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid "
+                "JOIN pg_catalog.pg_description d ON c.oid = d.objoid AND d.objsubid = 0 "
+                "WHERE n.nspname = %s AND c.relname = %s",
+                (schema, table_name)
+            )
+            table_comment = tc_result[0][0] if tc_result else None
+        except:
+            table_comment = None
         
         if columns_result:
-            columns_str = ", ".join([f"{c[0]} ({c[1]})" for c in columns_result])
+            # Build column descriptions: include business glossary if available
+            col_parts = []
+            for col_name, data_type, comment in columns_result:
+                if comment:
+                    col_parts.append(f"{col_name} ({comment}, {data_type})")
+                else:
+                    col_parts.append(f"{col_name} ({data_type})")
+            columns_str = " | ".join(col_parts)
+            
             relationships = fk_map.get(table_name, [])
             rel_str = f"\nRelationships: {'; '.join(relationships)}" if relationships else ""
             
-            text = (f"Schema: {schema}, Table: {schema}.{table_name}\n"
+            # Include table comment as business description
+            table_desc = f" ({table_comment})" if table_comment else ""
+            
+            text = (f"Schema: {schema}, Table: {schema}.{table_name}{table_desc}\n"
                     f"Columns: {columns_str}{rel_str}")
             texts.append(text)
             metadatas.append({'database': database, 'schema': schema, 
@@ -720,7 +727,72 @@ def load_metadata(vector_store, schema):
         vector_store.texts = texts
         vector_store.metadata = metadatas
         vector_store.index.add(embeddings_array)
+    
+    return _detect_glossary_status(schema)
 
+
+def _detect_glossary_status(schema):
+    """Detect if schema uses descriptive names or cryptic names with/without glossary."""
+    try:
+        col_comments = execute_query(
+            "SELECT COUNT(*) FROM pg_catalog.pg_description d "
+            "JOIN pg_catalog.pg_class c ON d.objoid = c.oid "
+            "JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid "
+            "WHERE n.nspname = %s AND d.objsubid > 0", (schema,)
+        )[0][0]
+        total_cols = execute_query(
+            "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = %s", (schema,)
+        )[0][0]
+    except:
+        return {'status': 'unknown', 'message': '', 'type': 'info'}
+    
+    comment_pct = (col_comments / total_cols * 100) if total_cols > 0 else 0
+    
+    try:
+        tables = [r[0] for r in execute_query(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = %s AND table_type = 'BASE TABLE'",
+            (schema,)
+        )]
+    except:
+        tables = []
+    
+    # Heuristic: cryptic names tend to be short segments joined by underscores
+    # e.g., t_cust_mst, t_ord_dtl vs customers, order_details
+    cryptic_count = 0
+    for name in tables:
+        parts = name.replace('_', ' ').split()
+        avg_part_len = sum(len(p) for p in parts) / len(parts) if parts else 0
+        if avg_part_len <= 4 and len(parts) >= 2:
+            cryptic_count += 1
+    
+    cryptic_pct = (cryptic_count / len(tables) * 100) if tables else 0
+    
+    if comment_pct >= 50:
+        return {
+            'status': 'glossary',
+            'message': f"✅ Business glossary detected — {int(comment_pct)}% of columns have descriptions. Using metadata for AI queries.",
+            'type': 'success'
+        }
+    elif cryptic_pct >= 50 and comment_pct < 10:
+        return {
+            'status': 'cryptic_no_glossary',
+            'message': f"⚠️ Cryptic object names detected ({int(cryptic_pct)}% abbreviated) with minimal glossary ({int(comment_pct)}% commented). "
+                       f"For best results, add COMMENT ON to your tables and columns.",
+            'type': 'warning'
+        }
+    else:
+        return {
+            'status': 'descriptive',
+            'message': f"✅ Descriptive object names detected — using table/column names directly for AI queries.",
+            'type': 'success'
+        }
+
+
+
+@st.cache_resource(show_spinner="Indexing schema...")
+def _cached_load_metadata(_vector_store, schema, _bedrock):
+    """Cache the metadata indexing so it doesn't re-run on every Streamlit rerun."""
+    return load_metadata(_vector_store, schema)
 
 def show_main_app():
     """Show main application after setup."""
@@ -790,12 +862,19 @@ def show_main_app():
     vector_store = FAISSManager(bedrock_client=bedrock)
     workflow = AnalysisWorkflow(bedrock_helper=bedrock, vector_store=vector_store, monitor=None)
     
-    # Load metadata
-    load_metadata(vector_store, conn_info['schema'])
+    # Load metadata (cached to avoid re-indexing on every Streamlit rerun)
+    glossary_status = _cached_load_metadata(vector_store, conn_info['schema'], bedrock)
     
     # Header
     st.title("📊 Sales Data Analyst")
     st.markdown("*Powered by Amazon Bedrock and Amazon Redshift*")
+    
+    # Show glossary detection status
+    if glossary_status and glossary_status.get('message'):
+        if glossary_status['type'] == 'warning':
+            st.warning(glossary_status['message'])
+        else:
+            st.info(glossary_status['message'])
     
     # Sidebar
     with st.sidebar:
@@ -805,21 +884,39 @@ def show_main_app():
         st.markdown(f"**Database:** `{conn_info['database']}`")
         st.markdown(f"**Schema:** `{conn_info['schema']}`")
         
-        # Show available tables
+        # Show available tables with expandable column details
         st.markdown("---")
         st.markdown("### 📋 Available Tables")
         try:
-            tables_query = f"""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = '{conn_info['schema']}' 
-                AND table_type = 'BASE TABLE'
-                ORDER BY table_name
-            """
-            tables_result = execute_query(tables_query)
+            schema_name = conn_info['schema']
+            tables_result = execute_query(
+                "SELECT c.relname, d.description FROM pg_catalog.pg_class c "
+                "JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid "
+                "LEFT JOIN pg_catalog.pg_description d ON c.oid = d.objoid AND d.objsubid = 0 "
+                "WHERE n.nspname = %s AND c.relkind = 'r' ORDER BY c.relname",
+                (schema_name,)
+            )
             if tables_result:
-                for (table_name,) in tables_result:
-                    st.write(f"• {table_name}")
+                for table_name, table_comment in tables_result:
+                    label = f"📄 {table_name}"
+                    if table_comment:
+                        label += f" — _{table_comment.split(' - ')[0]}_"
+                    with st.expander(label):
+                        cols = execute_query(
+                            "SELECT c.column_name, c.data_type, d.description "
+                            "FROM information_schema.columns c "
+                            "LEFT JOIN (SELECT cl.oid, cl.relname, ns.nspname FROM pg_catalog.pg_class cl "
+                            "JOIN pg_catalog.pg_namespace ns ON cl.relnamespace = ns.oid WHERE cl.relkind = 'r') t "
+                            "ON t.relname = c.table_name AND t.nspname = c.table_schema "
+                            "LEFT JOIN pg_catalog.pg_description d ON t.oid = d.objoid AND d.objsubid = c.ordinal_position "
+                            "WHERE c.table_schema = %s AND c.table_name = %s ORDER BY c.ordinal_position",
+                            (schema_name, table_name)
+                        )
+                        for col_name, data_type, comment in cols:
+                            if comment:
+                                st.markdown(f"**`{col_name}`** ({data_type}) — {comment}")
+                            else:
+                                st.markdown(f"**`{col_name}`** ({data_type})")
         except Exception as e:
             st.error(f"Error loading tables: {str(e)}")
         
@@ -829,41 +926,68 @@ def show_main_app():
             setup_state.update_state(setup_complete=False)
             st.rerun()
     
-    # Show sample queries for Northwind (Options 1 & 2)
-    is_northwind = conn_info['schema'] == 'northwind'
-    if is_northwind:
-        # Auto-collapse if query was just selected
-        expand_queries = not st.session_state.get('query_just_selected', False)
-        
-        with st.expander("💡 Sample Queries for Northwind Database", expanded=expand_queries):
-            st.markdown("Click any query to use it:")
-            for i, query in enumerate(NORTHWIND_SAMPLE_QUERIES):
-                if st.button(query, key=f"sample_{i}"):
-                    st.session_state.selected_query = query
-                    st.session_state.query_just_selected = True
-                    st.rerun()
-    
-    # Query interface
+    # Query mode selection
     st.markdown("### Ask questions about your data")
+    query_mode = st.radio("Choose input mode:", ["📋 Sample Questions", "✏️ Custom Question"], horizontal=True)
     
-    # Pre-fill if sample query selected
-    default_query = st.session_state.get('selected_query', '')
-    question = st.text_input("💬 Your question:", value=default_query, placeholder="e.g., What are the top 10 customers by revenue?")
+    question = ""
     
-    # Clear selected query after use
-    if 'selected_query' in st.session_state:
-        del st.session_state.selected_query
-    
-    # Reset collapse flag after displaying
-    if 'query_just_selected' in st.session_state:
-        st.session_state.query_just_selected = False
+    if query_mode == "📋 Sample Questions":
+        SAMPLE_QUERIES = {
+            "🟢 Simple: How many customers are there?": "How many customers are there?",
+            "🟡 Medium: What are the top 5 products by total quantity ordered?": "What are the top 5 products by total quantity ordered?",
+            "🔴 Complex: Which employees generated the most revenue by country, including the product categories they sold?": "Which employees generated the most revenue by country, including the product categories they sold?",
+        }
+        
+        if conn_info['schema'] in ('northwind', 'nw_abbr'):
+            SAMPLE_QUERIES.update({
+                "🟢 Simple: What are the top 5 most expensive products?": "What are the top 5 most expensive products?",
+                "🟡 Medium: What's the average order value by country?": "What's the average order value by country?",
+                "🟡 Medium: Which product categories sell the most?": "Which product categories sell the most?",
+                "🔴 Complex: What's the monthly sales trend?": "What's the monthly sales trend?",
+            })
+        
+        selected = st.selectbox("💡 Select a question:", [""] + list(SAMPLE_QUERIES.keys()), index=0)
+        question = SAMPLE_QUERIES.get(selected, '')
+    else:
+        question = st.text_input("💬 Enter your question:", placeholder="e.g., What are the top 10 customers by revenue?")
     
     if question:
         with st.spinner("Processing..."):
             try:
-                result = workflow.execute(question, execute_query)
+                result = workflow.execute(question, execute_query_with_columns)
                 
                 if "generated_sql" in result:
+                    sql = result["generated_sql"]
+                    
+                    # Collapsible: Semantic search details
+                    with st.expander("🔍 Semantic Search Details", expanded=False):
+                        if result.get("retrieved_tables"):
+                            st.markdown("**Tables identified:**")
+                            for t in result["retrieved_tables"]:
+                                st.markdown(f"- `{conn_info['schema']}.{t}`")
+                        
+                        # Show columns from filtered context (genuinely filtered by semantic search)
+                        if result.get("relevant_context"):
+                            st.markdown("**Columns identified:**")
+                            for doc in result["relevant_context"]:
+                                if doc.get('metadata', {}).get('type') == 'table':
+                                    tbl = doc['metadata']['table']
+                                    text = doc['text']
+                                    if 'Columns:' in text:
+                                        cols_part = text.split('Columns:')[1].split('\n')[0].strip()
+                                        st.markdown(f"**`{tbl}`**: {cols_part}")
+                    
+                    # Plain-English SQL explanation
+                    with st.expander("📖 Query Explanation", expanded=False):
+                        with st.spinner("Generating explanation..."):
+                            explanation = bedrock.invoke_model(
+                                f"Explain this SQL query in plain English so a business user can understand what it does. "
+                                f"Be concise (3-5 bullet points).\n\nSQL:\n{result['generated_sql']}",
+                                temperature=0.3
+                            )
+                            st.markdown(explanation)
+                    
                     st.subheader("📝 Generated SQL")
                     st.code(result["generated_sql"], language="sql")
                 
@@ -872,19 +996,11 @@ def show_main_app():
                     results = result["query_results"]
                     
                     if isinstance(results, list) and len(results) > 0:
-                        # Get column names from SQL query
-                        try:
-                            conn = get_redshift_connection()
-                            cursor = conn.cursor()
-                            cursor.execute(result["generated_sql"])
-                            column_names = [desc[0] for desc in cursor.description]
-                            cursor.close()
-                            conn.close()
-                            
-                            # Create DataFrame with proper column names
+                        # Use column names captured during execution (no re-query needed)
+                        column_names = result.get("column_names", [])
+                        if column_names:
                             df = pd.DataFrame(results, columns=column_names)
-                        except:
-                            # Fallback to default if column extraction fails
+                        else:
                             df = pd.DataFrame(results)
                         
                         st.dataframe(df, width="stretch")

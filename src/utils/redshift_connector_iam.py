@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Connection pool (min 1, max 5 connections)
 _pool = None
 
 def _get_pool():
@@ -18,7 +17,7 @@ def _get_pool():
         if host == 'localhost':
             host = '127.0.0.1'
         _pool = pool.SimpleConnectionPool(
-            1, 5,
+            1, 10,
             host=host,
             port=os.getenv('REDSHIFT_PORT', '5439'),
             database=os.getenv('REDSHIFT_DATABASE', 'sales_analyst'),
@@ -29,21 +28,6 @@ def _get_pool():
         )
     return _pool
 
-def get_redshift_connection():
-    password = os.getenv('REDSHIFT_PASSWORD')
-    if not password:
-        raise ValueError("REDSHIFT_PASSWORD must be set in .env file")
-    return _get_pool().getconn()
-
-def _return_conn(conn, close=False):
-    try:
-        if close:
-            _get_pool().putconn(conn, close=True)
-        else:
-            _get_pool().putconn(conn)
-    except:
-        pass
-
 def _reset_pool():
     global _pool
     try:
@@ -53,123 +37,136 @@ def _reset_pool():
         pass
     _pool = None
 
-def execute_query(query):
-    conn = get_redshift_connection()
-    cursor = conn.cursor()
+def get_redshift_connection():
+    password = os.getenv('REDSHIFT_PASSWORD')
+    if not password:
+        raise ValueError("REDSHIFT_PASSWORD must be set in .env file")
+    return _get_pool().getconn()
+
+def execute_query(query, params=None):
+    conn = None
     try:
-        cursor.execute(query)
+        conn = get_redshift_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
         results = cursor.fetchall()
+        cursor.close()
         return results
     except psycopg2.OperationalError:
-        # Connection went stale (e.g., tunnel restart) — reset pool and retry once
-        _return_conn(conn, close=True)
+        # Stale connection — reset pool and retry once
+        if conn:
+            try:
+                _get_pool().putconn(conn, close=True)
+            except:
+                pass
+            conn = None
         _reset_pool()
         conn = get_redshift_connection()
         cursor = conn.cursor()
-        cursor.execute(query)
+        cursor.execute(query, params)
         results = cursor.fetchall()
         cursor.close()
-        _return_conn(conn)
         return results
-    except Exception as e:
-        print(f"Error executing query: {str(e)}")
-        raise
     finally:
-        try:
-            cursor.close()
-        except:
-            pass
-        _return_conn(conn)
+        if conn:
+            try:
+                _get_pool().putconn(conn)
+            except:
+                try:
+                    conn.close()
+                except:
+                    pass
 
 def get_available_databases():
     try:
-        conn = get_redshift_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT datname FROM pg_database WHERE datistemplate = false")
-        databases = [row[0] for row in cursor.fetchall()]
-        cursor.close()
-        _return_conn(conn)
-        return databases
+        return [r[0] for r in execute_query("SELECT datname FROM pg_database WHERE datistemplate = false")]
     except Exception as e:
-        print(f"Error getting databases: {str(e)}")
+        print(f"Error getting databases: {e}")
         return []
 
 def get_available_schemas():
     try:
-        conn = get_redshift_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT schema_name 
-            FROM information_schema.schemata 
+        return [r[0] for r in execute_query("""
+            SELECT schema_name FROM information_schema.schemata 
             WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
             ORDER BY schema_name
-        """)
-        schemas = [row[0] for row in cursor.fetchall()]
-        cursor.close()
-        _return_conn(conn)
-        return schemas
+        """)]
     except Exception as e:
-        print(f"Error getting schemas: {str(e)}")
+        print(f"Error getting schemas: {e}")
         return []
 
 def get_available_tables(schema_name=None):
     try:
-        conn = get_redshift_connection()
-        cursor = conn.cursor()
         if schema_name:
-            cursor.execute("""
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = %s AND table_type = 'BASE TABLE'
-                ORDER BY table_name
-            """, (schema_name,))
-            tables = [row[0] for row in cursor.fetchall()]
+            return [r[0] for r in execute_query(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = %s AND table_type = 'BASE TABLE' ORDER BY table_name",
+                (schema_name,)
+            )]
         else:
-            cursor.execute("""
-                SELECT table_schema, table_name 
-                FROM information_schema.tables 
-                WHERE table_schema NOT IN ('information_schema', 'pg_catalog') 
-                AND table_type = 'BASE TABLE'
+            results = execute_query("""
+                SELECT table_schema, table_name FROM information_schema.tables 
+                WHERE table_schema NOT IN ('information_schema', 'pg_catalog') AND table_type = 'BASE TABLE'
                 ORDER BY table_schema, table_name
             """)
-            results = cursor.fetchall()
             tables = {}
             for schema, table in results:
                 tables.setdefault(schema, []).append(table)
-        cursor.close()
-        _return_conn(conn)
-        return tables
+            return tables
     except Exception as e:
-        print(f"Error getting tables: {str(e)}")
+        print(f"Error getting tables: {e}")
         return [] if schema_name else {}
 
 def get_table_columns(schema_name, table_name):
     try:
-        conn = get_redshift_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT column_name, data_type, is_nullable, column_default
-            FROM information_schema.columns 
-            WHERE table_schema = %s AND table_name = %s
-            ORDER BY ordinal_position
-        """, (schema_name, table_name))
-        columns = [{'name': r[0], 'type': r[1], 'nullable': r[2] == 'YES', 'default': r[3]} for r in cursor.fetchall()]
-        cursor.close()
-        _return_conn(conn)
-        return columns
+        return [{'name': r[0], 'type': r[1], 'nullable': r[2] == 'YES', 'default': r[3]} for r in execute_query(
+            "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position",
+            (schema_name, table_name)
+        )]
     except Exception as e:
-        print(f"Error getting table columns: {str(e)}")
+        print(f"Error getting table columns: {e}")
         return []
 
 def test_connection():
     try:
+        result = execute_query("SELECT 1")
+        return result[0][0] == 1
+    except Exception as e:
+        print(f"Connection test failed: {e}")
+        return False
+
+
+def execute_query_with_columns(query):
+    """Execute query and return (results, column_names) tuple."""
+    conn = None
+    try:
         conn = get_redshift_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        result = cursor.fetchone()
+        cursor.execute(query)
+        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+        results = cursor.fetchall()
         cursor.close()
-        _return_conn(conn)
-        return result[0] == 1
-    except Exception as e:
-        print(f"Connection test failed: {str(e)}")
-        return False
+        return results, column_names
+    except psycopg2.OperationalError:
+        if conn:
+            try:
+                _get_pool().putconn(conn, close=True)
+            except:
+                pass
+            conn = None
+        _reset_pool()
+        conn = get_redshift_connection()
+        cursor = conn.cursor()
+        cursor.execute(query)
+        column_names = [desc[0] for desc in cursor.description] if cursor.description else []
+        results = cursor.fetchall()
+        cursor.close()
+        return results, column_names
+    finally:
+        if conn:
+            try:
+                _get_pool().putconn(conn)
+            except:
+                try:
+                    conn.close()
+                except:
+                    pass

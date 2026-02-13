@@ -5,7 +5,9 @@
 
 This is sample code demonstrating the use of Amazon Bedrock and Generative AI to create an intelligent sales data analyst that uses natural language questions to query relational data stores, specifically Amazon Redshift. This example leverages the complete Northwind sample database with realistic sales scenarios containing customers, orders, and order details.
 
-**Please Note: If you don&#39;t want to build this from scratch, Amazon Redshift now supports GenAI capabilities natively, more information on that can be found [here](https://aws.amazon.com/blogs/aws/amazon-redshift-adds-new-ai-capabilities-to-boost-efficiency-and-productivity/).**
+The application supports both **descriptive schemas** (readable table/column names) and **cryptic/abbreviated schemas** with business glossary metadata via Redshift's `COMMENT ON` feature. It automatically detects which type of schema you're working with and adapts accordingly.
+
+**Please Note: If you don't want to build this from scratch, Amazon Redshift now supports GenAI capabilities natively, more information on that can be found [here](https://aws.amazon.com/blogs/aws/amazon-redshift-adds-new-ai-capabilities-to-boost-efficiency-and-productivity/).**
 
 ![Setup Options](images/all-options.png)
 
@@ -20,19 +22,17 @@ The architecture & flow of the POC is as follows:
 
 When a user interacts with the POC, the flow is as follows:
 
-1. **Natural Language Query**: The user makes a request through the Streamlit interface, asking a natural language question about sales data in Amazon Redshift (`app.py`)
+1. **Natural Language Query**: The user makes a request through the Streamlit interface, choosing from sample queries (Simple/Medium/Complex) or entering a custom question (`app.py`)
 
-2. **Query Understanding**: The natural language question is passed to Amazon Bedrock  for intent analysis and query classification (`src/graph/workflow.py` - `understand_query()`)
+2. **Context Retrieval**: The system performs semantic search using FAISS vector store to retrieve only the relevant tables and columns. Tables are filtered by embedding distance, and columns within large tables are further filtered by semantic similarity to the question (`src/graph/workflow.py` - `retrieve_context()`)
 
-3. **Context Retrieval**: The system performs semantic search using FAISS vector store to retrieve relevant database schema information and table relationships (`src/graph/workflow.py` - `retrieve_context()`)
+3. **Intelligent SQL Generation**: Amazon Bedrock (Claude Sonnet 4.5) generates optimized SQL queries using the filtered context, ensuring proper table joins and data type handling. Generated SQL is validated to be read-only (SELECT only) before execution (`src/graph/workflow.py` - `generate_sql()`)
 
-4. **Intelligent SQL Generation**: Amazon Bedrock generates optimized SQL queries using the retrieved context, ensuring proper table joins and data type handling (`src/graph/workflow.py` - `generate_sql()`)
+4. **Secure Query Execution**: The SQL query is executed against the Redshift cluster through a connection pool. For private clusters, connection goes through a secure SSM tunnel via the EC2 bastion host (`src/utils/redshift_connector_iam.py`)
 
-5. **Secure Query Execution**: The SQL query is executed against the private Redshift cluster through a secure SSM tunnel via the EC2 bastion host (`src/utils/redshift_connector_iam.py`)
+5. **Result Analysis**: The retrieved data is passed back to Amazon Bedrock for intelligent analysis and insight generation (`src/graph/workflow.py` - `analyze_results()`)
 
-6. **Result Analysis**: The retrieved data is passed back to Amazon Bedrock for intelligent analysis and insight generation (`src/graph/workflow.py` - `analyze_results()`)
-
-7. **Natural Language Response**: The system returns comprehensive insights and explanations to the user through the Streamlit frontend (`app.py`)
+6. **Natural Language Response**: The system returns comprehensive insights, a plain-English query explanation, and semantic search details to the user through the Streamlit frontend (`app.py`)
 
 # How to use this Repo:
 
@@ -77,14 +77,14 @@ When a user interacts with the POC, the flow is as follows:
     The file structure of this POC is organized as follows:
     
     * `requirements.txt` - All dependencies needed for the application
-    * `app.py` - Main Streamlit application with UI components
-    * `src/bedrock/bedrock_helper_iam.py` - Amazon Bedrock client wrapper with IAM authentication
-    * `src/graph/workflow.py` - LangGraph-inspired AI workflow orchestration
-    * `src/vector_store/faiss_manager.py` - FAISS vector store for semantic search
+    * `app.py` - Main Streamlit application with UI, setup wizard, and query interface
+    * `src/bedrock/bedrock_helper_iam.py` - Amazon Bedrock client wrapper (Claude Sonnet 4.5 + Titan Embed v2)
+    * `src/graph/workflow.py` - AI workflow: semantic search → SQL generation → execution → analysis
+    * `src/vector_store/faiss_manager.py` - FAISS vector store for per-table semantic search
     * `src/utils/redshift_cluster_manager.py` - Automatic AWS infrastructure provisioning
-    * `src/utils/redshift_connector_iam.py` - Secure database connection management with IAM
+    * `src/utils/redshift_connector_iam.py` - Connection pooling and secure database access
     * `src/utils/northwind_bootstrapper.py` - Automatic sample data loading
-    * `src/config/settings.py` - Application configuration
+    * `src/config/settings.py` - Application configuration (model ID, region)
     * `cleanup.py` - AWS resource cleanup script
 
 3. Open the repository in your favorite code editor. In the terminal, navigate to the POC's folder:
@@ -159,6 +159,13 @@ When a user interacts with the POC, the flow is as follows:
     OPTION1_USER=admin
     OPTION1_PASSWORD=YourSecurePassword123!
 
+    # Option 3 Default Connection (pre-populates the UI form)
+    OPTION3_HOST=your-cluster.xxx.redshift.amazonaws.com
+    OPTION3_DATABASE=dev
+    OPTION3_SCHEMA=your_schema
+    OPTION3_USER=awsuser
+    OPTION3_PASSWORD=YourPassword123!
+
     # SSL Configuration (Required for Redshift)
     REDSHIFT_SSL_MODE=require
     ```
@@ -166,6 +173,7 @@ When a user interacts with the POC, the flow is as follows:
     ⚠️ **Important**: 
     - Change `OPTION1_PASSWORD` to a secure password (required for Option 1)
     - Password must meet AWS Redshift requirements: 8-64 characters, at least one uppercase, one lowercase, and one number
+    - `OPTION3_*` variables are optional — they pre-populate the Option 3 connection form for convenience
     - Never commit `.env` file to version control
 
 8. **EC2-Specific Configuration** (Skip if running locally):
@@ -197,11 +205,12 @@ When a user interacts with the POC, the flow is as follows:
 
    **Option 3: Use Existing Data**
    - Connect to your existing Redshift cluster with your own data
+   - Connection form is pre-populated from `OPTION3_*` variables in `.env`
    - No data loading - uses your existing tables
    - Indexes your schema for AI queries
    - Takes ~2 minutes
 
-11. **Start Analyzing**: Once setup is complete, you can ask natural language questions like:
+11. **Start Analyzing**: Once setup is complete, you can use sample queries (Simple/Medium/Complex) from the dropdown or enter custom questions:
    - "What are the top 5 customers by order value?"
    - "Show me monthly sales trends for 1997"
    - "Which products have the highest profit margins?"
@@ -220,13 +229,14 @@ This will automatically remove all created AWS resources including the Redshift 
 
 ## Architecture Highlights
 
-- **Zero Configuration**: Complete infrastructure automation
-- **Context-Aware AI**: Semantic search for intelligent SQL generation
-- **Multi-Step AI Pipeline**: Query understanding → Context retrieval → SQL generation → Analysis
-- **Enterprise Security**: Private networking with secure tunnels
+- **Per-Table Semantic Search**: Each table is indexed as a separate FAISS document with column-level filtering — only relevant tables and columns are passed to the LLM
+- **Business Glossary Support**: Automatically reads `COMMENT ON` metadata from Redshift tables/columns and uses business descriptions for semantic matching on cryptic schemas
+- **Glossary Auto-Detection**: Detects whether your schema uses descriptive names or cryptic/abbreviated names and shows appropriate guidance
+- **SQL Safety Validation**: Generated SQL is validated to be read-only (SELECT only) before execution — blocks DROP, DELETE, UPDATE, INSERT, etc.
+- **Connection Pooling**: Reuses database connections via `psycopg2` connection pool with stale connection recovery
+- **Enterprise Security**: Private networking with secure SSM tunnels, parameterized SQL queries
 - **Flexible Authentication**: Works seamlessly on EC2 (IAM role) or local machines (AWS CLI credentials)
-- **No Hardcoded Credentials**: Uses AWS credential chain for secure authentication
-- **Extensible Design**: Modular architecture for easy customization
+- **Cached Schema Indexing**: Schema metadata and embeddings are cached across Streamlit reruns to avoid redundant Bedrock API calls
 
 ## Bastion Host & SSM Tunnel
 
@@ -244,15 +254,36 @@ Your Machine (localhost:5439) → SSM Tunnel → EC2 Bastion → Private Redshif
 - If the bastion instance is **stopped** (e.g., manually or by AWS), the application will not be able to connect to Redshift. Restart it from the EC2 console or run: `aws ec2 start-instances --instance-ids <bastion-instance-id>`
 - Run `python3 cleanup.py` when finished to remove the bastion and all other created resources
 
+## Business Glossary Support (COMMENT ON)
+
+For schemas with cryptic/abbreviated object names (e.g., `t_cust_mst`, `cmpny_nm`), the application leverages Redshift's `COMMENT ON` feature as a business glossary:
+
+```sql
+-- Add business descriptions to tables
+COMMENT ON TABLE nw_abbr.t_cust_mst IS 'Customer Master - Contains all customer records';
+
+-- Add business descriptions to columns
+COMMENT ON COLUMN nw_abbr.t_cust_mst.cmpny_nm IS 'Company Name - Official registered name';
+```
+
+The application automatically:
+1. **Detects** whether your schema has descriptive or cryptic names
+2. **Reads** `COMMENT ON` metadata from `pg_description` during schema indexing
+3. **Enriches** FAISS documents with business descriptions for accurate semantic matching
+4. **Shows** a banner indicating glossary status (✅ glossary detected, ⚠️ cryptic names without glossary)
+
+This enables the semantic search to correctly match "customers" → `t_cust_mst` via the "Customer Master" comment.
+
 
 ### Built with:
 
-- Amazon Bedrock: AI/ML models for natural language processing
+- Amazon Bedrock (Claude Sonnet 4.5): LLM for SQL generation and analysis
+- Amazon Bedrock (Titan Embed v2): Embedding model for semantic search
 - Amazon Redshift: Private data warehouse for fast analytics
 - EC2 + SSM: Bastion host with Session Manager tunnel
-- FAISS: Vector database for semantic search
+- FAISS: Vector database for per-table semantic search
 - Streamlit: Web interface
-- LangGraph: Workflow orchestration
+- psycopg2: Connection pooling for Redshift
 
 ### Security Architecture:
 - Your Computer → SSM Tunnel → EC2 Bastion → Private Redshift Cluster
@@ -282,6 +313,10 @@ Your Machine (localhost:5439) → SSM Tunnel → EC2 Bastion → Private Redshif
     - Password must be 8-64 characters with uppercase, lowercase, and number
     - Restart the application after updating `.env`
 
+- **"Connection pool exhausted"**:
+    - This can happen if many queries are run rapidly or after connection errors
+    - Restart the Streamlit application to reset the connection pool
+
 - **"App won't start"**:
     - Ensure Python 3.11+ is installed: python3 --version
     - Install requirements: pip install -r requirements.txt
@@ -292,8 +327,7 @@ Your Machine (localhost:5439) → SSM Tunnel → EC2 Bastion → Private Redshif
     - Connection goes through localhost:5439 via SSM tunnel
     - If connection fails, wait 2-3 minutes for SSM agent to initialize
 
-- **"Session Manager plugin issues**:
-
+- **"Session Manager plugin issues"**:
     - The setup script automatically installs the Session Manager plugin
     - If installation fails, the app will show manual installation instructions
     - Plugin is required for secure SSM tunneling to private Redshift cluster
@@ -325,8 +359,10 @@ This application demonstrates the art of possibility with Amazon Bedrock and Red
 - ✅ Private Redshift cluster with no public access
 - ✅ Secure SSM tunneling through bastion host
 - ✅ Parameterized SQL queries to prevent injection
+- ✅ SQL read-only validation (blocks DROP, DELETE, UPDATE, INSERT)
 - ✅ Environment variables for configuration
 - ✅ `.env` file excluded from version control
+- ✅ Connection pooling with stale connection recovery
 
 
 ## How-To Guide

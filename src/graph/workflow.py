@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Tuple
 import json
 import os
 import re
+import numpy as np
 from datetime import datetime
 
 
@@ -23,7 +24,7 @@ class AnalysisWorkflow:
         self.schema = os.getenv('REDSHIFT_SCHEMA', 'northwind')
     
     def retrieve_context(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Retrieve relevant context from vector store."""
+        """Retrieve relevant context from vector store with column-level filtering."""
         query = state['query']
         
         try:
@@ -39,15 +40,75 @@ class AnalysisWorkflow:
                     "steps_completed": state.get("steps_completed", []) + ["retrieve_context"]
                 }
             
-            # Extract table names for display
+            # Filter tables by relative distance
+            best_dist = similar_docs[0]['distance']
+            threshold = best_dist * 1.15
+            filtered_docs = [doc for doc in similar_docs if doc['distance'] <= threshold]
+            
+            overview_docs = [doc for doc in similar_docs if doc['metadata'].get('type') == 'overview']
+            for od in overview_docs:
+                if od not in filtered_docs:
+                    filtered_docs.append(od)
+            
+            # Column-level filtering using embeddings
+            query_emb = np.array(self.vector_store.bedrock_client.get_embeddings(query), dtype='float32')
+            
+            column_filtered_docs = []
+            for doc in filtered_docs:
+                if doc.get('metadata', {}).get('type') != 'table':
+                    column_filtered_docs.append(doc)
+                    continue
+                
+                text = doc['text']
+                if 'Columns:' not in text:
+                    column_filtered_docs.append(doc)
+                    continue
+                
+                header = text.split('Columns:')[0]  # "Schema: ..., Table: ...\n"
+                cols_str = text.split('Columns:')[1].split('\n')[0].strip()
+                rel_str = ""
+                if '\nRelationships:' in text:
+                    rel_str = '\n' + text.split('\nRelationships:')[1]
+                
+                # Score each column against the query
+                col_entries = [c.strip() for c in cols_str.split(' | ') if c.strip()]
+                if len(col_entries) <= 6:
+                    # Small table — keep all columns
+                    column_filtered_docs.append(doc)
+                    continue
+                
+                scored = []
+                for col_entry in col_entries:
+                    col_emb = np.array(
+                        self.vector_store.bedrock_client.get_embeddings(col_entry), dtype='float32'
+                    )
+                    dist = float(np.sum((query_emb - col_emb) ** 2))
+                    scored.append((col_entry, dist))
+                
+                scored.sort(key=lambda x: x[1])
+                # Keep top 50% or minimum 5 columns
+                keep_n = max(5, len(scored) // 2)
+                kept = scored[:keep_n]
+                kept_set = {s[0] for s in kept}
+                
+                # Always keep ID/key columns (needed for JOINs)
+                for col_entry, dist in scored[keep_n:]:
+                    col_name = col_entry.split(' (')[0].strip().lower()
+                    if ('id' in col_name or 'key' in col_name) and col_entry not in kept_set:
+                        kept.append((col_entry, dist))
+                
+                new_text = f"{header}Columns: {' | '.join(s[0] for s in kept)}{rel_str}"
+                new_doc = {**doc, 'text': new_text}
+                column_filtered_docs.append(new_doc)
+            
             retrieved_tables = [
-                doc['metadata']['table'] for doc in similar_docs 
+                doc['metadata']['table'] for doc in column_filtered_docs 
                 if doc['metadata'].get('type') == 'table'
             ]
             
             return {
                 **state,
-                "relevant_context": similar_docs,
+                "relevant_context": column_filtered_docs,
                 "retrieved_tables": retrieved_tables,
                 "steps_completed": state.get("steps_completed", []) + ["retrieve_context"]
             }
@@ -195,10 +256,11 @@ Provide a clear, concise analysis that directly answers the question. Include ke
         if "generated_sql" in state and "error" not in state and execute_query_func:
             try:
                 start_time = datetime.now()
-                results = execute_query_func(state["generated_sql"])
+                results, column_names = execute_query_func(state["generated_sql"])
                 execution_time = (datetime.now() - start_time).total_seconds()
                 
                 state["query_results"] = results
+                state["column_names"] = column_names
                 state["execution_time"] = execution_time
                 
                 # Step 4: Analyze results
