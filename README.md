@@ -218,6 +218,38 @@ When a user interacts with the POC, the flow is as follows:
    - "Which products have the highest profit margins?"
    - "What countries generate the most revenue?"
 
+12. **Try the Cryptic Schema Demo** (Optional — recommended for learning):
+
+   After setting up Northwind (Option 1 or 2), you can create an abbreviated version of the same database to see how the application handles cryptic/non-obvious table and column names.
+
+   **How to create it:**
+   - Connect to the `northwind` schema via any setup option
+   - In the sidebar, find the **🧪 Demo: Cryptic Schema** section
+   - Click **🧪 Create nw_abbr Schema** (~30 seconds)
+   - This creates a `nw_abbr` schema with tables like `t_cust_mst`, `t_ord_hdr`, `t_prd_mst` — all with abbreviated column names
+   - It also adds `COMMENT ON` metadata (business glossary descriptions + `[FK:]` relationship hints) to every table and column
+
+   **How to use it:**
+   - Click **⬅️ Back to Setup** in the sidebar
+   - Choose **Option 3** (Use Existing Data)
+   - Enter your connection details with schema = `nw_abbr`
+   - Try the same sample questions — they return identical results despite the cryptic names
+
+   **What you'll see in the sidebar:**
+
+   | Connected to | Sidebar shows |
+   |---|---|
+   | `northwind` + `nw_abbr` doesn't exist | 🧪 **Create nw_abbr Schema** button |
+   | `northwind` + `nw_abbr` already exists | ✅ Confirmation message (no button) |
+   | `nw_abbr` or any other schema | Section hidden (not relevant) |
+
+   **What this demonstrates:**
+   - **Business Glossary**: Cryptic names like `cmpny_nm` are matched to "Company Name" via `COMMENT ON` metadata
+   - **Relationship Manager**: The `[FK:]` hints in column comments and `relationships.yaml` entries provide explicit JOIN paths — without these, the AI would have no way to know that `t_ord_hdr.cust_id` joins to `t_cust_mst.cust_id`
+   - **🔗 Manage Relationships** panel in the sidebar shows all detected relationships with origin badges (📝 from comments, 🔧 from YAML)
+
+   This is the best way to understand how the Relationship Manager works before applying it to your own schemas. See [RELATIONSHIP_MANAGER.md](RELATIONSHIP_MANAGER.md) for full documentation.
+
 
 ## Cleanup
 
@@ -234,6 +266,7 @@ This will automatically remove all created AWS resources including the Redshift 
 - **Per-Table Semantic Search**: Each table is indexed as a separate FAISS document with column-level filtering — only relevant tables and columns are passed to the LLM
 - **Business Glossary Support**: Automatically reads `COMMENT ON` metadata from Redshift tables/columns and uses business descriptions for semantic matching on cryptic schemas
 - **Glossary Auto-Detection**: Detects whether your schema uses descriptive names or cryptic/abbreviated names and shows appropriate guidance
+- **Relationship Manager**: Merges join metadata from 4 sources (FK constraints, `COMMENT ON` `[FK:]` patterns, YAML config, UI edits) so the AI generates correct JOINs even without database-level constraints — [full docs](RELATIONSHIP_MANAGER.md)
 - **SQL Safety Validation**: Generated SQL is validated to be read-only (SELECT only) before execution — blocks DROP, DELETE, UPDATE, INSERT, etc.
 - **Connection Pooling**: Reuses database connections via `psycopg2` connection pool with stale connection recovery
 - **Enterprise Security**: Private networking with secure SSM tunnels, parameterized SQL queries
@@ -275,6 +308,29 @@ The application automatically:
 4. **Shows** a banner indicating glossary status (✅ glossary detected, ⚠️ cryptic names without glossary)
 
 This enables the semantic search to correctly match "customers" → `t_cust_mst` via the "Customer Master" comment.
+
+## Relationship Manager (Table JOINs without FK Constraints)
+
+Most Redshift data warehouses don't define primary key or foreign key constraints — Redshift treats them as informational only, so teams often skip them. Without these constraints, the AI has no metadata describing how tables relate to each other and must guess JOIN conditions from column names alone. This works for descriptive schemas but fails for cryptic/abbreviated ones.
+
+The **Relationship Manager** solves this by collecting join metadata from 4 sources (FK constraints, `COMMENT ON` patterns, YAML config, and UI edits), merging them with deduplication, and injecting explicit `Relationships:` into each table's vector store document.
+
+**Quick example** — add `[FK:]` hints to column comments:
+```sql
+COMMENT ON COLUMN nw_abbr.t_ord_hdr.cust_id IS 'Customer ID - References the customer [FK: t_cust_mst.cust_id]';
+```
+
+Or define relationships in `relationships.yaml`:
+```yaml
+nw_abbr:
+  - source: t_ord_hdr.cust_id
+    target: t_cust_mst.cust_id
+    description: "Order placed by customer"
+```
+
+Or use the **🔗 Manage Relationships** panel in the Streamlit sidebar to add/edit/delete relationships visually.
+
+📖 **[Full documentation → RELATIONSHIP_MANAGER.md](RELATIONSHIP_MANAGER.md)** — includes detailed scenarios, behind-the-scenes walkthrough, before/after examples, and a quick start checklist.
 
 
 ### Built with:

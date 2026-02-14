@@ -17,6 +17,10 @@ from src.utils.redshift_connector_iam import execute_query, execute_query_with_c
 from src.utils.northwind_bootstrapper import bootstrap_northwind, check_northwind_exists
 from src.utils.setup_state import SetupState
 from src.utils.redshift_cluster_manager import create_redshift_cluster
+from src.utils.relationship_manager import (
+    get_all_relationships, build_relationship_map,
+    save_yaml_relationship, delete_yaml_relationship, get_yaml_relationships
+)
 import numpy as np
 
 
@@ -642,24 +646,9 @@ def load_metadata(vector_store, schema):
     metadatas = []
     table_names = [t[0] for t in tables_result]
     
-    # Get foreign key relationships
-    try:
-        fk_result = execute_query(
-            "SELECT tc.table_name, kcu.column_name, ccu.table_name, ccu.column_name "
-            "FROM information_schema.table_constraints tc "
-            "JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name "
-            "JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name "
-            "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = %s",
-            (schema,)
-        )
-    except:
-        fk_result = []
-    
-    fk_map = {}
-    for row in (fk_result or []):
-        tbl, col, ftbl, fcol = row
-        fk_map.setdefault(tbl, []).append(f"{col} -> {schema}.{ftbl}.{fcol}")
-        fk_map.setdefault(ftbl, []).append(f"Referenced by {schema}.{tbl}.{col}")
+    # Get relationships from all 4 sources (FK constraints, COMMENT ON [FK:], YAML, UI)
+    all_rels = get_all_relationships(execute_query, schema)
+    fk_map = build_relationship_map(all_rels, schema)
     
     for table_name in table_names:
         columns_result = execute_query(
@@ -926,6 +915,92 @@ def show_main_app():
                                 st.markdown(f"**`{col_name}`** ({data_type})")
         except Exception as e:
             st.error(f"Error loading tables: {str(e)}")
+        
+        # Create Abbreviated Schema button (only when connected to northwind)
+        if conn_info['schema'] == 'northwind':
+            st.markdown("---")
+            st.markdown("### 🧪 Demo: Cryptic Schema")
+            from src.utils.nw_abbr_bootstrapper import check_nw_abbr_exists, bootstrap_nw_abbr
+            if check_nw_abbr_exists():
+                st.success("✅ `nw_abbr` schema exists. Use Option 3 to connect to it.")
+            else:
+                st.caption("Create an abbreviated copy of Northwind with cryptic table/column names and business glossary metadata. Use it to demo the Relationship Manager on non-obvious schemas.")
+                if st.button("🧪 Create nw_abbr Schema", key="create_nw_abbr"):
+                    result = bootstrap_nw_abbr(northwind_schema='northwind', show_progress=True)
+                    if result:
+                        st.success("✅ Created! Go to **⬅️ Back to Setup** → **Option 3** → schema `nw_abbr` to try it.")
+        
+        # Relationship Management Panel
+        st.markdown("---")
+        st.markdown("### 🔗 Manage Relationships")
+        
+        schema_name = conn_info['schema']
+        all_rels = get_all_relationships(execute_query, schema_name)
+        
+        if all_rels:
+            for rel in all_rels:
+                origin_icon = {"fk_constraint": "✅", "comment_fk": "📝", "yaml": "🔧"}.get(rel["origin"], "❓")
+                desc = f" — {rel['description']}" if rel.get("description") else ""
+                st.markdown(f"{origin_icon} `{rel['source_table']}.{rel['source_column']}` → `{rel['target_table']}.{rel['target_column']}`{desc}")
+            st.caption("✅ FK constraint | 📝 COMMENT ON | 🔧 YAML/UI")
+        else:
+            st.info("No relationships found. Add some below.")
+        
+        with st.expander("➕ Add Relationship"):
+            try:
+                all_tables = [t[0] for t in execute_query(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = %s AND table_type = 'BASE TABLE' ORDER BY table_name",
+                    (schema_name,)
+                )]
+                all_cols_cache = {}
+                for tbl in all_tables:
+                    cols = execute_query(
+                        "SELECT column_name FROM information_schema.columns WHERE table_schema = %s AND table_name = %s ORDER BY ordinal_position",
+                        (schema_name, tbl)
+                    )
+                    all_cols_cache[tbl] = [c[0] for c in cols]
+                
+                src_table = st.selectbox("Source table", all_tables, key="rel_src_tbl")
+                src_col = st.selectbox("Source column", all_cols_cache.get(src_table, []), key="rel_src_col")
+                tgt_table = st.selectbox("Target table", all_tables, key="rel_tgt_tbl")
+                tgt_col = st.selectbox("Target column", all_cols_cache.get(tgt_table, []), key="rel_tgt_col")
+                rel_desc = st.text_input("Description (optional)", key="rel_desc")
+                
+                if st.button("Add Relationship", key="add_rel"):
+                    save_yaml_relationship(schema_name, src_table, src_col, tgt_table, tgt_col, rel_desc)
+                    # Clear cached index to force re-indexing
+                    for key in list(st.session_state.keys()):
+                        if key.startswith('indexed_'):
+                            del st.session_state[key]
+                    st.success("Relationship added! Re-indexing...")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
+        
+        # Delete relationship
+        yaml_rels = get_yaml_relationships(schema_name)
+        if yaml_rels:
+            with st.expander("🗑️ Remove YAML Relationship"):
+                del_options = [f"{r['source_table']}.{r['source_column']} → {r['target_table']}.{r['target_column']}"
+                               for r in yaml_rels]
+                del_sel = st.selectbox("Select to remove", del_options, key="del_rel_sel")
+                if st.button("Delete", key="del_rel"):
+                    idx = del_options.index(del_sel)
+                    r = yaml_rels[idx]
+                    delete_yaml_relationship(schema_name,
+                                             f"{r['source_table']}.{r['source_column']}",
+                                             f"{r['target_table']}.{r['target_column']}")
+                    for key in list(st.session_state.keys()):
+                        if key.startswith('indexed_'):
+                            del st.session_state[key]
+                    st.success("Deleted! Re-indexing...")
+                    st.rerun()
+        
+        if st.button("🔄 Re-index Schema", key="reindex"):
+            for key in list(st.session_state.keys()):
+                if key.startswith('indexed_'):
+                    del st.session_state[key]
+            st.rerun()
         
         # Back to setup button
         st.markdown("---")

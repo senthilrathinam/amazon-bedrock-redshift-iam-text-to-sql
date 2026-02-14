@@ -1,0 +1,56 @@
+# Relationship mappings for schemas without FK constraints.
+# Format: source: table.column, target: table.column
+# These are merged with FK constraints and COMMENT ON [FK:] metadata at indexing time.
+# UI edits are also saved here.
+
+northwind:
+  - source: orders.customerid
+    target: customers.customerid
+    description: "Order placed by customer"
+  - source: orders.employeeid
+    target: employees.employeeid
+    description: "Order processed by employee"
+  - source: orders.shipvia
+    target: shippers.shipperid
+    description: "Order shipped via carrier"
+  - source: order_details.orderid
+    target: orders.orderid
+    description: "Line item belongs to order"
+  - source: order_details.productid
+    target: products.productid
+    description: "Line item references product"
+  - source: products.supplierid
+    target: suppliers.supplierid
+    description: "Product supplied by vendor"
+  - source: products.categoryid
+    target: categories.categoryid
+    description: "Product belongs to category"
+  - source: employees.reportsto
+    target: employees.employeeid
+    description: "Employee reports to manager"
+
+nw_abbr:
+  - source: t_ord_hdr.cust_id
+    target: t_cust_mst.cust_id
+    description: "Order placed by customer"
+  - source: t_ord_hdr.emp_id
+    target: t_emp_mst.emp_id
+    description: "Order processed by employee"
+  - source: t_ord_hdr.shp_via
+    target: t_shp_ref.shp_id
+    description: "Order shipped via carrier"
+  - source: t_ord_dtl.ord_id
+    target: t_ord_hdr.ord_id
+    description: "Line item belongs to order"
+  - source: t_ord_dtl.prd_id
+    target: t_prd_mst.prd_id
+    description: "Line item references product"
+  - source: t_prd_mst.sup_id
+    target: t_sup_mst.sup_id
+    description: "Product supplied by vendor"
+  - source: t_prd_mst.cat_id
+    target: t_cat_ref.cat_id
+    description: "Product belongs to category"
+  - source: t_emp_mst.rpts_to
+    target: t_emp_mst.emp_id
+    description: "Employee reports to manager"
