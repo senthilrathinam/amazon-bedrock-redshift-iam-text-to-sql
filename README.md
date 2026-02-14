@@ -11,7 +11,9 @@ The application supports both **descriptive schemas** (readable table/column nam
 
 ![Setup Options](images/all-options.png)
 
-![Query Results](images/option-1-output-1.png)
+![Query Results](images/option3-objects-descriptive.png)
+
+![Query Results - Cryptic Schema](images/option3-objects-cryptic.png)
 
 ## Goal of this POC
 The goal of this repo is to provide users the ability to use Amazon Bedrock and generative AI to ask natural language questions about sales performance, customer behavior, and business metrics. These questions are automatically transformed into optimized SQL queries against a private Amazon Redshift cluster. This repo includes complete infrastructure automation, security hardening, and intelligent context retrieval.
@@ -70,7 +72,7 @@ When a user interacts with the POC, the flow is as follows:
 2. Clone the repository to your local machine.
 
     ```bash
-    git clone https://github.com/aws-samples/amazon-bedrock-amazon-redshift-text-to-sql-poc.git
+    git clone https://github.com/aws-samples/genai-quickstart-pocs.git
     
     ```
     
@@ -89,7 +91,7 @@ When a user interacts with the POC, the flow is as follows:
 
 3. Open the repository in your favorite code editor. In the terminal, navigate to the POC's folder:
     ```bash
-    cd amazon-bedrock-redshift-iam-text-to-sql
+    cd genai-quickstart-pocs/genai-quickstart-pocs-python/amazon-bedrock-amazon-redshift-text-to-sql-poc
     ```
 
 4. Configure the Python virtual environment, activate it:
@@ -363,7 +365,3 @@ This application demonstrates the art of possibility with Amazon Bedrock and Red
 - ✅ Environment variables for configuration
 - ✅ `.env` file excluded from version control
 - ✅ Connection pooling with stale connection recovery
-
-
-## How-To Guide
-For detailed usage instructions and advanced configuration, visit [HOWTO.md](HOWTO.md)

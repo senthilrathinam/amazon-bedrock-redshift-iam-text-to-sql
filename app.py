@@ -724,6 +724,8 @@ def load_metadata(vector_store, schema):
         if embeddings_array.ndim == 1:
             embeddings_array = embeddings_array.reshape(1, -1)
         
+        # Reset index before adding (prevents stale entries from previous schema)
+        vector_store.index.reset()
         vector_store.texts = texts
         vector_store.metadata = metadatas
         vector_store.index.add(embeddings_array)
@@ -788,12 +790,6 @@ def _detect_glossary_status(schema):
         }
 
 
-
-@st.cache_resource(show_spinner="Indexing schema...")
-def _cached_load_metadata(_vector_store, schema, _bedrock):
-    """Cache the metadata indexing so it doesn't re-run on every Streamlit rerun."""
-    return load_metadata(_vector_store, schema)
-
 def show_main_app():
     """Show main application after setup."""
     setup_state = SetupState()
@@ -857,13 +853,24 @@ def show_main_app():
     os.environ['REDSHIFT_USER'] = conn_info['user']
     os.environ['REDSHIFT_PASSWORD'] = conn_info['password']
     
-    # Initialize components
-    bedrock = BedrockHelper(region_name=os.getenv('AWS_REGION', 'us-east-1'))
-    vector_store = FAISSManager(bedrock_client=bedrock)
-    workflow = AnalysisWorkflow(bedrock_helper=bedrock, vector_store=vector_store, monitor=None)
+    # Initialize components (cached in session state to avoid re-indexing on reruns)
+    cache_key = f"indexed_{conn_info['schema']}_{conn_info['host']}"
+    if cache_key not in st.session_state:
+        bedrock = BedrockHelper(region_name=os.getenv('AWS_REGION', 'us-east-1'))
+        vector_store = FAISSManager(bedrock_client=bedrock)
+        with st.spinner("Indexing schema..."):
+            glossary_status = load_metadata(vector_store, conn_info['schema'])
+        workflow = AnalysisWorkflow(bedrock_helper=bedrock, vector_store=vector_store, monitor=None)
+        st.session_state[cache_key] = {
+            'bedrock': bedrock, 'vector_store': vector_store,
+            'workflow': workflow, 'glossary_status': glossary_status
+        }
     
-    # Load metadata (cached to avoid re-indexing on every Streamlit rerun)
-    glossary_status = _cached_load_metadata(vector_store, conn_info['schema'], bedrock)
+    cached = st.session_state[cache_key]
+    bedrock = cached['bedrock']
+    vector_store = cached['vector_store']
+    workflow = cached['workflow']
+    glossary_status = cached['glossary_status']
     
     # Header
     st.title("📊 Sales Data Analyst")
@@ -923,6 +930,10 @@ def show_main_app():
         # Back to setup button
         st.markdown("---")
         if st.button("⬅️ Back to Setup", key="back_to_setup"):
+            # Clear cached index so re-indexing happens on next setup
+            for key in list(st.session_state.keys()):
+                if key.startswith('indexed_'):
+                    del st.session_state[key]
             setup_state.update_state(setup_complete=False)
             st.rerun()
     
