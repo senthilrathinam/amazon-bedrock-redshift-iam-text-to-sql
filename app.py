@@ -21,6 +21,7 @@ from src.utils.relationship_manager import (
     get_all_relationships, build_relationship_map,
     save_yaml_relationship, delete_yaml_relationship, get_yaml_relationships
 )
+from src.utils.query_history import save_query, get_saved_queries, delete_saved_query
 import numpy as np
 
 
@@ -1045,6 +1046,12 @@ def show_main_app():
     
     # Sidebar
     with st.sidebar:
+        option_labels = {1: "Create New Cluster", 2: "Load to Existing Cluster",
+                         3: "Use Existing Data", 4: "Import from Excel"}
+        setup_option = state.get('setup_option')
+        if setup_option:
+            st.markdown(f"### 🛠️ Option {setup_option}: {option_labels.get(setup_option, '')}")
+        
         st.markdown("### 📊 Connection Status")
         st.success("✅ Connected")
         st.markdown(f"**Cluster:** `{conn_info['host'].split('.')[0]}`")
@@ -1060,39 +1067,39 @@ def show_main_app():
         
         # Show available tables with expandable column details
         st.markdown("---")
-        st.markdown("### 📋 Available Tables")
-        try:
-            schema_name = conn_info['schema']
-            tables_result = execute_query(
-                "SELECT c.relname, d.description FROM pg_catalog.pg_class c "
-                "JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid "
-                "LEFT JOIN pg_catalog.pg_description d ON c.oid = d.objoid AND d.objsubid = 0 "
-                "WHERE n.nspname = %s AND c.relkind = 'r' ORDER BY c.relname",
-                (schema_name,)
-            )
-            if tables_result:
-                for table_name, table_comment in tables_result:
-                    label = f"📄 {table_name}"
-                    if table_comment:
-                        label += f" — _{table_comment.split(' - ')[0]}_"
-                    with st.expander(label):
-                        cols = execute_query(
-                            "SELECT c.column_name, c.data_type, d.description "
-                            "FROM information_schema.columns c "
-                            "LEFT JOIN (SELECT cl.oid, cl.relname, ns.nspname FROM pg_catalog.pg_class cl "
-                            "JOIN pg_catalog.pg_namespace ns ON cl.relnamespace = ns.oid WHERE cl.relkind = 'r') t "
-                            "ON t.relname = c.table_name AND t.nspname = c.table_schema "
-                            "LEFT JOIN pg_catalog.pg_description d ON t.oid = d.objoid AND d.objsubid = c.ordinal_position "
-                            "WHERE c.table_schema = %s AND c.table_name = %s ORDER BY c.ordinal_position",
-                            (schema_name, table_name)
-                        )
-                        for col_name, data_type, comment in cols:
-                            if comment:
-                                st.markdown(f"**`{col_name}`** ({data_type}) — {comment}")
-                            else:
-                                st.markdown(f"**`{col_name}`** ({data_type})")
-        except Exception as e:
-            st.error(f"Error loading tables: {str(e)}")
+        with st.expander("📋 Available Tables", expanded=False):
+            try:
+                schema_name = conn_info['schema']
+                tables_result = execute_query(
+                    "SELECT c.relname, d.description FROM pg_catalog.pg_class c "
+                    "JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid "
+                    "LEFT JOIN pg_catalog.pg_description d ON c.oid = d.objoid AND d.objsubid = 0 "
+                    "WHERE n.nspname = %s AND c.relkind = 'r' ORDER BY c.relname",
+                    (schema_name,)
+                )
+                if tables_result:
+                    for table_name, table_comment in tables_result:
+                        label = f"📄 {table_name}"
+                        if table_comment:
+                            label += f" — _{table_comment.split(' - ')[0]}_"
+                        with st.expander(label):
+                            cols = execute_query(
+                                "SELECT c.column_name, c.data_type, d.description "
+                                "FROM information_schema.columns c "
+                                "LEFT JOIN (SELECT cl.oid, cl.relname, ns.nspname FROM pg_catalog.pg_class cl "
+                                "JOIN pg_catalog.pg_namespace ns ON cl.relnamespace = ns.oid WHERE cl.relkind = 'r') t "
+                                "ON t.relname = c.table_name AND t.nspname = c.table_schema "
+                                "LEFT JOIN pg_catalog.pg_description d ON t.oid = d.objoid AND d.objsubid = c.ordinal_position "
+                                "WHERE c.table_schema = %s AND c.table_name = %s ORDER BY c.ordinal_position",
+                                (schema_name, table_name)
+                            )
+                            for col_name, data_type, comment in cols:
+                                if comment:
+                                    st.markdown(f"**`{col_name}`** ({data_type}) — {comment}")
+                                else:
+                                    st.markdown(f"**`{col_name}`** ({data_type})")
+            except Exception as e:
+                st.error(f"Error loading tables: {str(e)}")
         
         # Create Abbreviated Schema button (only when connected to northwind)
         if conn_info['schema'] == 'northwind':
@@ -1110,21 +1117,20 @@ def show_main_app():
         
         # Relationship Management Panel
         st.markdown("---")
-        st.markdown("### 🔗 Manage Relationships")
-        
-        schema_name = conn_info['schema']
-        all_rels = get_all_relationships(execute_query, schema_name)
-        
-        if all_rels:
-            for rel in all_rels:
-                origin_icon = {"fk_constraint": "✅", "comment_fk": "📝", "yaml": "🔧"}.get(rel["origin"], "❓")
-                desc = f" — {rel['description']}" if rel.get("description") else ""
-                st.markdown(f"{origin_icon} `{rel['source_table']}.{rel['source_column']}` → `{rel['target_table']}.{rel['target_column']}`{desc}")
-            st.caption("✅ FK constraint | 📝 COMMENT ON | 🔧 YAML/UI")
-        else:
-            st.info("No relationships found. Add some below.")
-        
-        with st.expander("➕ Add Relationship"):
+        with st.expander("🔗 Manage Relationships", expanded=False):
+            schema_name = conn_info['schema']
+            all_rels = get_all_relationships(execute_query, schema_name)
+            
+            if all_rels:
+                for rel in all_rels:
+                    origin_icon = {"fk_constraint": "✅", "comment_fk": "📝", "yaml": "🔧"}.get(rel["origin"], "❓")
+                    desc = f" — {rel['description']}" if rel.get("description") else ""
+                    st.markdown(f"{origin_icon} `{rel['source_table']}.{rel['source_column']}` → `{rel['target_table']}.{rel['target_column']}`{desc}")
+                st.caption("✅ FK constraint | 📝 COMMENT ON | 🔧 YAML/UI")
+            else:
+                st.info("No relationships found. Add some below.")
+            
+            st.markdown("**➕ Add Relationship**")
             try:
                 all_tables = [t[0] for t in execute_query(
                     "SELECT table_name FROM information_schema.tables WHERE table_schema = %s AND table_type = 'BASE TABLE' ORDER BY table_name",
@@ -1146,7 +1152,6 @@ def show_main_app():
                 
                 if st.button("Add Relationship", key="add_rel"):
                     save_yaml_relationship(schema_name, src_table, src_col, tgt_table, tgt_col, rel_desc)
-                    # Clear cached index to force re-indexing
                     for key in list(st.session_state.keys()):
                         if key.startswith('indexed_'):
                             del st.session_state[key]
@@ -1154,11 +1159,11 @@ def show_main_app():
                     st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
-        
-        # Delete relationship
-        yaml_rels = get_yaml_relationships(schema_name)
-        if yaml_rels:
-            with st.expander("🗑️ Remove YAML Relationship"):
+            
+            # Delete relationship
+            yaml_rels = get_yaml_relationships(schema_name)
+            if yaml_rels:
+                st.markdown("**🗑️ Remove Relationship**")
                 del_options = [f"{r['source_table']}.{r['source_column']} → {r['target_table']}.{r['target_column']}"
                                for r in yaml_rels]
                 del_sel = st.selectbox("Select to remove", del_options, key="del_rel_sel")
@@ -1179,10 +1184,77 @@ def show_main_app():
                 if key.startswith('indexed_'):
                     del st.session_state[key]
             st.rerun()
+        
+        # Query History Panel
+        st.markdown("---")
+        with st.expander("📜 Query History", expanded=False):
+            saved = get_saved_queries(schema_name=conn_info['schema'], limit=20)
+            if saved:
+                for sq in saved:
+                    ts = sq['saved_at'].strftime('%m/%d %H:%M') if sq['saved_at'] else ''
+                    col_a, col_b = st.columns([5, 1])
+                    with col_a:
+                        if st.button(f"🕐 {ts} — {sq['question'][:40]}", key=f"hist_{sq['id']}"):
+                            st.session_state['loaded_history'] = sq
+                            st.rerun()
+                    with col_b:
+                        if st.button("🗑️", key=f"del_hist_{sq['id']}"):
+                            delete_saved_query(sq['id'])
+                            if st.session_state.get('loaded_history', {}).get('id') == sq['id']:
+                                del st.session_state['loaded_history']
+                            st.rerun()
+            else:
+                st.info("No saved queries yet. Run a query and click 💾 Save to Query History.")
+    
+    # Display loaded history query if selected
+    if st.session_state.get('loaded_history'):
+        sq = st.session_state['loaded_history']
+        st.info(f"📜 Viewing saved query from {sq['saved_at']}")
+        if st.button("✖️ Close History View", key="close_history"):
+            del st.session_state['loaded_history']
+            st.rerun()
+        
+        st.subheader("📝 Question")
+        st.markdown(sq['question'])
+        
+        st.subheader("📝 Generated SQL")
+        st.code(sq['generated_sql'], language="sql")
+        
+        if sq.get('results_json'):
+            import json as _json
+            try:
+                data = _json.loads(sq['results_json'])
+                if data.get('rows'):
+                    st.subheader(f"📊 Results ({sq['row_count']} rows)")
+                    cols = data.get('columns', [])
+                    if cols:
+                        df = pd.DataFrame(data['rows'], columns=cols)
+                    else:
+                        df = pd.DataFrame(data['rows'])
+                    st.dataframe(df, width="stretch")
+            except:
+                pass
+        
+        if sq.get('analysis'):
+            st.subheader("💡 Analysis")
+            st.markdown(sq['analysis'])
+        
+        return  # Don't show the query input when viewing history
     
     # Query mode selection
     st.markdown("### Ask questions about your data")
-    query_mode = st.radio("Choose input mode:", ["📋 Sample Questions", "✏️ Custom Question"], horizontal=True)
+    
+    col_mode, col_reset = st.columns([6, 1])
+    with col_mode:
+        query_mode = st.radio("Choose input mode:", ["📋 Sample Questions", "✏️ Custom Question"], horizontal=True)
+    with col_reset:
+        st.markdown("")  # spacing
+        if st.button("🔄 Clear", key="clear_query"):
+            # Remove cached results and explanation
+            for key in list(st.session_state.keys()):
+                if key.startswith('last_result_') or key.startswith('explain_'):
+                    del st.session_state[key]
+            st.rerun()
     
     question = ""
     
@@ -1195,73 +1267,103 @@ def show_main_app():
         question = st.text_input("💬 Enter your question:", placeholder="e.g., What are the top 10 customers by revenue?")
     
     if question:
-        with st.spinner("Processing..."):
-            try:
-                result = workflow.execute(question, execute_query_with_columns)
+        # Cache result in session state to avoid re-processing on rerun
+        cache_key = f"last_result_{hash(question)}"
+        if cache_key not in st.session_state:
+            with st.spinner("Processing..."):
+                try:
+                    st.session_state[cache_key] = workflow.execute(question, execute_query_with_columns)
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    return
+        
+        result = st.session_state[cache_key]
+        
+        try:
+            if "generated_sql" in result:
+                sql = result["generated_sql"]
                 
-                if "generated_sql" in result:
-                    sql = result["generated_sql"]
+                # Collapsible: Semantic search details
+                with st.expander("🔍 Semantic Search Details", expanded=False):
+                    if result.get("retrieved_tables"):
+                        st.markdown("**Tables identified:**")
+                        for t in result["retrieved_tables"]:
+                            st.markdown(f"- `{conn_info['schema']}.{t}`")
                     
-                    # Collapsible: Semantic search details
-                    with st.expander("🔍 Semantic Search Details", expanded=False):
-                        if result.get("retrieved_tables"):
-                            st.markdown("**Tables identified:**")
-                            for t in result["retrieved_tables"]:
-                                st.markdown(f"- `{conn_info['schema']}.{t}`")
-                        
-                        # Show columns from filtered context (genuinely filtered by semantic search)
-                        if result.get("relevant_context"):
-                            st.markdown("**Columns identified:**")
-                            for doc in result["relevant_context"]:
-                                if doc.get('metadata', {}).get('type') == 'table':
-                                    tbl = doc['metadata']['table']
-                                    text = doc['text']
-                                    if 'Columns:' in text:
-                                        cols_part = text.split('Columns:')[1].split('\n')[0].strip()
-                                        st.markdown(f"**`{tbl}`**: {cols_part}")
-                    
-                    # Plain-English SQL explanation
-                    with st.expander("📖 Query Explanation", expanded=False):
+                    # Show columns from filtered context (names only)
+                    if result.get("relevant_context"):
+                        st.markdown("**Columns identified:**")
+                        st.caption("Includes top semantic matches for your question + JOIN key columns + columns from golden query examples")
+                        for doc in result["relevant_context"]:
+                            if doc.get('metadata', {}).get('type') == 'table':
+                                tbl = doc['metadata']['table']
+                                text = doc['text']
+                                if 'Columns:' in text:
+                                    cols_part = text.split('Columns:')[1].split('\n')[0].strip()
+                                    col_names = [c.strip().split(' (')[0] for c in cols_part.split(' | ') if c.strip()]
+                                    st.markdown(f"**`{tbl}`**: `{'`, `'.join(col_names)}`")
+                
+                # Plain-English SQL explanation
+                with st.expander("📖 Query Explanation", expanded=False):
+                    explain_key = f"explain_{hash(question)}"
+                    if explain_key not in st.session_state:
                         with st.spinner("Generating explanation..."):
-                            explanation = bedrock.invoke_model(
+                            st.session_state[explain_key] = bedrock.invoke_model(
                                 f"Explain this SQL query in plain English so a business user can understand what it does. "
                                 f"Be concise (3-5 bullet points).\n\nSQL:\n{result['generated_sql']}",
                                 temperature=0.3
                             )
-                            st.markdown(explanation)
-                    
-                    st.subheader("📝 Generated SQL")
-                    st.code(result["generated_sql"], language="sql")
+                    st.markdown(st.session_state[explain_key])
                 
-                if "query_results" in result and result["query_results"]:
-                    st.subheader("📊 Results")
-                    results = result["query_results"]
+                st.subheader("📝 Generated SQL")
+                st.code(result["generated_sql"], language="sql")
+            
+            if "query_results" in result and result["query_results"]:
+                st.subheader("📊 Results")
+                results = result["query_results"]
+                
+                if isinstance(results, list) and len(results) > 0:
+                    column_names = result.get("column_names", [])
+                    if column_names:
+                        df = pd.DataFrame(results, columns=column_names)
+                    else:
+                        df = pd.DataFrame(results)
                     
-                    if isinstance(results, list) and len(results) > 0:
-                        # Use column names captured during execution (no re-query needed)
-                        column_names = result.get("column_names", [])
-                        if column_names:
-                            df = pd.DataFrame(results, columns=column_names)
-                        else:
-                            df = pd.DataFrame(results)
-                        
-                        st.dataframe(df, width="stretch")
-                        
-                        # Download button
-                        csv = df.to_csv(index=False).encode('utf-8')
-                        st.download_button(
-                            label="📥 Download as CSV",
-                            data=csv,
-                            file_name="query_results.csv",
-                            mime="text/csv",
-                            key="download_csv"
+                    st.dataframe(df, width="stretch")
+                    
+                    csv = df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download as CSV",
+                        data=csv,
+                        file_name="query_results.csv",
+                        mime="text/csv",
+                        key="download_csv"
+                    )
+            
+            if "analysis" in result:
+                st.subheader("💡 Analysis")
+                st.markdown(result["analysis"])
+            
+            # Save query button (outside spinner — instant save)
+            if "generated_sql" in result and result.get("query_results"):
+                if st.button("💾 Save to Query History", key="save_query"):
+                    with st.spinner("Saving..."):
+                        success = save_query(
+                            schema_name=conn_info['schema'],
+                            question=question,
+                            generated_sql=result["generated_sql"],
+                            results=result["query_results"],
+                            column_names=result.get("column_names", []),
+                            analysis=result.get("analysis", "")
                         )
-                
-                if "analysis" in result:
-                    st.subheader("💡 Analysis")
-                    st.markdown(result["analysis"])
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+                    if success:
+                        st.success("✅ Query saved!")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to save query")
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
 
 
 def main():

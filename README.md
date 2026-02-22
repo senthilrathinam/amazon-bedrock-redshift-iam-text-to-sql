@@ -101,7 +101,7 @@ When a user interacts with the POC, the flow is as follows:
     * `src/utils/excel_knowledge_loader.py` - Excel workbook parser for customer schema import (Option 4)
     * `src/utils/genai_poc_bootstrapper.py` - Mortgage POC schema bootstrapper with sample data
     * `src/utils/relationship_manager.py` - Merges JOIN metadata from 4 sources (FK, comments, YAML, UI)
-    * `src/config/settings.py` - Application configuration (model ID, region)
+    * `src/utils/query_history.py` - Persistent query history storage in Redshift
     * `examples.yaml` - Golden query examples for few-shot prompting (per schema)
     * `relationships.yaml` - Table JOIN relationships for schemas without FK constraints
     * `cleanup.py` - AWS resource cleanup script
@@ -170,6 +170,13 @@ When a user interacts with the POC, the flow is as follows:
     ```bash
     # AWS Configuration
     AWS_REGION=us-east-1
+
+    # Bedrock LLM Model (Optional - defaults to Claude Sonnet 4.5)
+    # Supported models:
+    #   us.anthropic.claude-sonnet-4-5-20250929-v1:0   (Claude Sonnet 4.5 - default)
+    #   us.anthropic.claude-3-5-sonnet-20241022-v2:0   (Claude Sonnet 3.5 v2)
+    #   amazon.nova-pro-v1:0                           (Amazon Nova Pro)
+    # BEDROCK_MODEL_ID=us.anthropic.claude-sonnet-4-5-20250929-v1:0
 
     # Option 1 Default Cluster Configuration (Required for Option 1)
     OPTION1_CLUSTER_ID=sales-analyst-cluster
@@ -309,15 +316,19 @@ This will automatically remove all created AWS resources including the Redshift 
 ## Architecture Highlights
 
 - **Per-Table Semantic Search**: Each table is indexed as a separate FAISS document with column-level filtering — only relevant tables and columns are passed to the LLM
+- **Two-Pass Table Selection**: For small schemas (≤5 tables), the LLM first identifies which tables are needed based on table descriptions, then only those tables' columns are retrieved — keeps context focused
+- **Smart Column Filtering**: For large tables (100+ columns), columns are ranked by semantic similarity to the question and capped at the top 10 matches. Additionally, columns referenced in golden query examples (`examples.yaml`) and JOIN key columns (`*id`, `*number`, `*key`) are always retained. This means the Semantic Search Details section may show more columns than strictly needed for a given query — these extra columns come from the golden examples and represent the most commonly useful columns for your domain
 - **Few-Shot Learning**: Golden query examples from `examples.yaml` are matched by semantic similarity and injected into the prompt — teaches the LLM correct patterns without memorizing answers
 - **SQL Column Validation**: Generated SQL is parsed and all column/table references are validated against the actual schema — hallucinated columns trigger an automatic retry with correction feedback
-- **Small Schema Optimization**: For schemas with ≤5 tables, all tables and columns are passed to the LLM without distance-based filtering
 - **Excel-Based Schema Import**: Upload a 3-tab Excel workbook (Tables, Columns, Queries) to auto-create schemas with `COMMENT ON` metadata, relationships, and golden queries
 - **Dynamic Sample Questions**: The sample questions dropdown auto-populates from `examples.yaml` based on the connected schema, with auto-detected complexity labels (🟢 Simple / 🟡 Medium / 🔴 Complex)
 - **Business Glossary Support**: Automatically reads `COMMENT ON` metadata from Redshift tables/columns and uses business descriptions for semantic matching on cryptic schemas
 - **Glossary Auto-Detection**: Detects whether your schema uses descriptive names or cryptic/abbreviated names and shows appropriate guidance
 - **Relationship Manager**: Merges join metadata from 4 sources (FK constraints, `COMMENT ON` `[FK:]` patterns, YAML config, UI edits) so the AI generates correct JOINs even without database-level constraints — [full docs](RELATIONSHIP_MANAGER.md)
 - **SQL Safety Validation**: Generated SQL is validated to be read-only (SELECT only) before execution — blocks DROP, DELETE, UPDATE, INSERT, etc.
+- **Query History**: Save queries and their results to a Redshift table (`genai_app_meta.query_history`) for later retrieval. Browse saved queries from the sidebar, click to reload full results and analysis, and delete entries you no longer need
+- **Structured Analysis**: Query results are analyzed with a structured format — Direct Answer, Key Findings, and Notable Observations — with specific numbers, percentages, and business implications
+- **Configurable LLM**: Set `BEDROCK_MODEL_ID` in `.env` to use your preferred model (Claude Sonnet 4.5, Sonnet 3.5 v2, Amazon Nova Pro) — uses the Converse API for cross-model compatibility
 - **Connection Pooling**: Reuses database connections via `psycopg2` connection pool with stale connection recovery
 - **Enterprise Security**: Private networking with secure SSM tunnels, parameterized SQL queries
 - **Flexible Authentication**: Works seamlessly on EC2 (IAM role) or local machines (AWS CLI credentials)

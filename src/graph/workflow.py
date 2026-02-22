@@ -87,12 +87,53 @@ class AnalysisWorkflow:
         # Cache valid columns per table (populated during retrieve_context)
         self._valid_columns = {}
 
+    def _get_example_columns(self) -> set:
+        """Extract all column names referenced in golden query examples."""
+        cols = set()
+        for ex in self._examples:
+            sql = ex.get('sql', '')
+            # Find alias.column patterns
+            for match in re.finditer(r'(?:\w+)\.(\w+)', sql):
+                cols.add(match.group(1).lower())
+        return cols
+
+    def _select_tables_via_llm(self, query: str) -> List[str]:
+        """First pass: ask LLM which tables are needed based on table names + descriptions."""
+        # Build a compact table summary from vector store
+        table_summaries = []
+        for i, meta in enumerate(self.vector_store.metadata):
+            if meta.get('type') == 'table':
+                text = self.vector_store.texts[i]
+                # Extract just table name and first line (description)
+                header = text.split('\nColumns:')[0].strip() if '\nColumns:' in text else text.split('\n')[0]
+                table_summaries.append(f"- {header}")
+
+        if not table_summaries:
+            return []
+
+        prompt = f"""Given this user question and the available tables, return ONLY the table names needed to answer the question.
+
+Question: {query}
+
+Available tables:
+{chr(10).join(table_summaries)}
+
+Return ONLY a comma-separated list of table names (without schema prefix). If all tables are needed, list all of them.
+Example response: customers, orders, order_details"""
+
+        try:
+            response = self.bedrock.invoke_model(prompt, temperature=0.0, max_tokens=200)
+            # Parse table names from response
+            names = [t.strip().lower().split('.')[-1] for t in response.strip().split(',')]
+            return [n for n in names if n]
+        except:
+            return []  # On failure, fall back to all tables
+
     def retrieve_context(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Retrieve relevant context from vector store with column-level filtering."""
+        """Retrieve relevant context with two-pass table selection for small schemas."""
         query = state['query']
 
         try:
-            # Count total table docs in vector store
             table_doc_count = sum(1 for m in self.vector_store.metadata if m.get('type') == 'table')
 
             similar_docs = self.vector_store.similarity_search(query, k=8)
@@ -107,9 +148,15 @@ class AnalysisWorkflow:
                     "steps_completed": state.get("steps_completed", []) + ["retrieve_context"]
                 }
 
-            # For small schemas (<=5 tables), pass ALL tables — no distance filtering
+            # Two-pass filtering for small schemas: ask LLM which tables are needed
             if table_doc_count <= 5:
-                filtered_docs = similar_docs
+                needed_tables = self._select_tables_via_llm(query)
+                if needed_tables:
+                    filtered_docs = [doc for doc in similar_docs
+                                     if doc.get('metadata', {}).get('type') != 'table'
+                                     or doc['metadata'].get('table', '').lower() in needed_tables]
+                else:
+                    filtered_docs = similar_docs  # Fallback: keep all
             else:
                 best_dist = similar_docs[0]['distance']
                 threshold = best_dist * 1.15
@@ -121,11 +168,12 @@ class AnalysisWorkflow:
                 if od not in filtered_docs:
                     filtered_docs.append(od)
 
-            # Column-level filtering using embeddings (skip for small schemas)
+            # Column-level filtering
             query_emb = np.array(self.vector_store.bedrock_client.get_embeddings(query), dtype='float32')
+            example_cols = self._get_example_columns()
 
             column_filtered_docs = []
-            self._valid_columns = {}  # Reset
+            self._valid_columns = {}
 
             for doc in filtered_docs:
                 if doc.get('metadata', {}).get('type') != 'table':
@@ -152,8 +200,8 @@ class AnalysisWorkflow:
                     col_name = col_entry.split(' (')[0].strip().lower()
                     self._valid_columns.setdefault(table_name, set()).add(col_name)
 
-                # For small schemas, keep all columns
-                if table_doc_count <= 5 or len(col_entries) <= 8:
+                # Skip column filtering for small tables
+                if len(col_entries) <= 8:
                     column_filtered_docs.append(doc)
                     continue
 
@@ -166,14 +214,19 @@ class AnalysisWorkflow:
                     scored.append((col_entry, dist))
 
                 scored.sort(key=lambda x: x[1])
-                keep_n = max(5, len(scored) // 2)
+                # Keep top 10 by semantic similarity (capped, not 50%)
+                keep_n = min(10, max(5, len(scored) // 4))
                 kept = scored[:keep_n]
                 kept_set = {s[0] for s in kept}
 
-                # Always keep ID/key columns (needed for JOINs)
+                # Always keep ID/key/number columns and columns from golden examples
                 for col_entry, dist in scored[keep_n:]:
                     col_name = col_entry.split(' (')[0].strip().lower()
-                    if ('id' in col_name or 'key' in col_name or 'number' in col_name) and col_entry not in kept_set:
+                    if col_entry in kept_set:
+                        continue
+                    if 'id' in col_name or 'key' in col_name or 'number' in col_name:
+                        kept.append((col_entry, dist))
+                    elif col_name in example_cols:
                         kept.append((col_entry, dist))
 
                 new_text = f"{header}Columns: {' | '.join(s[0] for s in kept)}{rel_str}"
@@ -338,21 +391,29 @@ Generate ONLY the corrected SQL query without any explanation.
                 "steps_completed": state.get("steps_completed", []) + ["analyze_results"]
             }
 
-        results_str = "\n".join([str(row) for row in results[:10]])
-        if len(results) > 10:
-            results_str += f"\n... and {len(results) - 10} more rows"
+        results_str = "\n".join([str(row) for row in results[:20]])
+        if len(results) > 20:
+            results_str += f"\n... and {len(results) - 20} more rows"
 
-        prompt = f"""Analyze these query results to answer the user's question:
+        column_names = state.get('column_names', [])
+        col_header = f"Columns: {', '.join(column_names)}\n" if column_names else ""
+
+        prompt = f"""You are a data analyst. Analyze these query results to answer the user's question.
 
 Question: {query}
 
 SQL Query:
 {sql}
 
-Query Results (first 10 rows):
+{col_header}Query Results ({len(results)} total rows, showing first 20):
 {results_str}
 
-Provide a clear, concise analysis that directly answers the question. Include key insights from the data.
+Provide your analysis in this structure:
+1. **Direct Answer**: A one-sentence answer to the question
+2. **Key Findings**: 3-5 bullet points highlighting the most important patterns, rankings, or numbers from the data
+3. **Notable Observations**: Any interesting trends, outliers, or business implications an analyst should be aware of
+
+Use specific numbers from the results. Format currency values with $ and commas. Keep it concise and actionable.
 """
 
         try:

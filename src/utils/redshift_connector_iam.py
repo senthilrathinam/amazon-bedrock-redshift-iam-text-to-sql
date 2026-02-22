@@ -49,7 +49,11 @@ def execute_query(query, params=None):
         conn = get_redshift_connection()
         cursor = conn.cursor()
         cursor.execute(query, params)
-        results = cursor.fetchall()
+        if cursor.description:
+            results = cursor.fetchall()
+        else:
+            conn.commit()
+            results = []
         cursor.close()
         return results
     except psycopg2.OperationalError:
@@ -64,7 +68,11 @@ def execute_query(query, params=None):
         conn = get_redshift_connection()
         cursor = conn.cursor()
         cursor.execute(query, params)
-        results = cursor.fetchall()
+        if cursor.description:
+            results = cursor.fetchall()
+        else:
+            conn.commit()
+            results = []
         cursor.close()
         return results
     finally:

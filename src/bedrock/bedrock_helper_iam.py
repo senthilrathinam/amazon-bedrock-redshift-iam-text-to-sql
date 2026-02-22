@@ -5,7 +5,9 @@ import boto3
 import json
 import os
 from typing import List, Dict, Any, Optional
-from src.config.settings import DEFAULT_MODEL_ID
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class BedrockHelper:
@@ -28,27 +30,15 @@ class BedrockHelper:
                     max_tokens: int = 4096,
                     temperature: float = 0.7) -> str:
         if not model_id:
-            model_id = DEFAULT_MODEL_ID
-        
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        })
+            model_id = os.getenv('BEDROCK_MODEL_ID')
         
         try:
-            response = self.bedrock_runtime.invoke_model(
+            response = self.bedrock_runtime.converse(
                 modelId=model_id,
-                body=body
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                inferenceConfig={"maxTokens": max_tokens, "temperature": temperature}
             )
-            response_body = json.loads(response['body'].read())
-            return response_body['content'][0]['text']
+            return response['output']['message']['content'][0]['text']
         except Exception as e:
             print(f"Error invoking Bedrock: {str(e)}")
             raise
