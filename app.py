@@ -1051,6 +1051,13 @@ def show_main_app():
         st.markdown(f"**Database:** `{conn_info['database']}`")
         st.markdown(f"**Schema:** `{conn_info['schema']}`")
         
+        if st.button("⬅️ Back to Setup", key="back_to_setup"):
+            for key in list(st.session_state.keys()):
+                if key.startswith('indexed_'):
+                    del st.session_state[key]
+            setup_state.update_state(setup_complete=False)
+            st.rerun()
+        
         # Show available tables with expandable column details
         st.markdown("---")
         st.markdown("### 📋 Available Tables")
@@ -1171,16 +1178,6 @@ def show_main_app():
             for key in list(st.session_state.keys()):
                 if key.startswith('indexed_'):
                     del st.session_state[key]
-            st.rerun()
-        
-        # Back to setup button
-        st.markdown("---")
-        if st.button("⬅️ Back to Setup", key="back_to_setup"):
-            # Clear cached index so re-indexing happens on next setup
-            for key in list(st.session_state.keys()):
-                if key.startswith('indexed_'):
-                    del st.session_state[key]
-            setup_state.update_state(setup_complete=False)
             st.rerun()
     
     # Query mode selection
