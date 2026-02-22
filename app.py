@@ -903,9 +903,15 @@ def _get_sample_queries(schema: str) -> dict:
         try:
             with open(examples_path, 'r') as f:
                 data = yaml.safe_load(f) or {}
-            if schema in data and data[schema]:
+
+            # For genai_poc* schemas, fall back to genai_poc examples if no exact match
+            lookup_schema = schema
+            if schema not in data and schema.startswith('genai_poc') and 'genai_poc' in data:
+                lookup_schema = 'genai_poc'
+
+            if lookup_schema in data and data[lookup_schema]:
                 queries = {}
-                for ex in data[schema]:
+                for ex in data[lookup_schema]:
                     q = ex['question']
                     sql = ex.get('sql', '').strip()
                     join_count = sql.lower().count(' join ')
