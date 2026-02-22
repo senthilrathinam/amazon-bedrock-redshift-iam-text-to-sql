@@ -127,14 +127,33 @@ def _detect_join_columns(parsed: dict) -> List[Tuple[str, str, str, str]]:
     return relationships
 
 
-def save_examples(schema: str, queries: List[dict]):
-    """Save golden queries to examples.yaml."""
+def save_examples(schema: str, queries: List[dict], parsed_tables: Optional[List[dict]] = None):
+    """Save golden queries to examples.yaml, replacing any schema prefix in SQL with target schema."""
+    import re as _re
+
     data = {}
     if os.path.exists(EXAMPLES_PATH):
         with open(EXAMPLES_PATH, 'r') as f:
             data = yaml.safe_load(f) or {}
 
-    data[schema] = [{"question": q["question"], "sql": q["sql"]} for q in queries]
+    # Collect known table names to detect schema prefixes in SQL
+    table_names = set()
+    if parsed_tables:
+        table_names = {t["table_name"] for t in parsed_tables}
+
+    entries = []
+    for q in queries:
+        sql = q["sql"]
+        # Find all schema.table_name patterns where table_name is one of our known tables
+        for tbl in table_names:
+            pattern = r'(\w+)\.' + _re.escape(tbl) + r'\b'
+            for match in _re.finditer(pattern, sql, _re.IGNORECASE):
+                old_schema = match.group(1)
+                if old_schema.lower() != schema.lower():
+                    sql = sql.replace(f"{old_schema}.{tbl}", f"{schema}.{tbl}")
+        entries.append({"question": q["question"], "sql": sql})
+
+    data[schema] = entries
 
     with open(EXAMPLES_PATH, 'w') as f:
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
@@ -160,8 +179,9 @@ def save_relationships(schema: str, rels: List[Tuple[str, str, str, str]]):
         yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 
 
-def provision_schema(schema: str, parsed: dict, execute_query_func):
+def provision_schema(schema: str, parsed: dict, execute_query_func, load_sample_data: bool = False):
     """Create schema, tables, and apply COMMENT ON metadata in Redshift.
+    Optionally loads sample data for testing.
     Returns (success: bool, message: str)."""
     try:
         from .redshift_connector_iam import get_redshift_connection
@@ -194,16 +214,103 @@ def provision_schema(schema: str, parsed: dict, execute_query_func):
                     conn.rollback()
         conn.commit()
 
-        # Save relationships and examples
+        # Load sample data if requested
+        data_msg = ""
+        if load_sample_data:
+            data_msg = _load_sample_data_for_schema(schema, parsed, cur, conn)
+
+        # Save relationships and examples (with schema prefix replacement)
         rels = _detect_join_columns(parsed)
         save_relationships(schema, rels)
-        save_examples(schema, parsed["queries"])
+        save_examples(schema, parsed["queries"], parsed["tables"])
 
         conn.close()
 
         table_count = len(parsed["tables"])
         query_count = len(parsed["queries"])
-        return True, f"Created {table_count} tables, {commented} column comments, {len(rels)} relationships, {query_count} golden queries."
+        msg = f"Created {table_count} tables, {commented} column comments, {len(rels)} relationships, {query_count} golden queries."
+        if data_msg:
+            msg += f" {data_msg}"
+        return True, msg
 
     except Exception as e:
         return False, f"Error: {str(e)}"
+
+
+def _load_sample_data_for_schema(schema: str, parsed: dict, cur, conn) -> str:
+    """Generate and insert sample data. Uses mortgage-specific generators if tables match,
+    otherwise generates generic placeholder data."""
+    table_names = {t["table_name"] for t in parsed["tables"]}
+    known_tables = {"origination_currentversion", "originationborrower_currentversion", "originationproperty_currentversion"}
+
+    if table_names == known_tables:
+        return _load_mortgage_sample_data(schema, cur, conn)
+
+    # Generic sample data for unknown schemas
+    import random
+    from datetime import datetime, timedelta
+    random.seed(42)
+    total_rows = 0
+
+    table_cols: Dict[str, List[dict]] = {}
+    for c in parsed["columns"]:
+        table_cols.setdefault(c["table_name"], []).append(c)
+
+    for tbl, cols in table_cols.items():
+        rows = []
+        for i in range(20):
+            row = []
+            for c in cols:
+                dt = c["data_type"]
+                if "int" in dt or "bigint" in dt:
+                    row.append(random.randint(1, 1000))
+                elif "numeric" in dt or "float" in dt or "double" in dt or "real" in dt:
+                    row.append(round(random.uniform(1, 100000), 2))
+                elif "bool" in dt:
+                    row.append(random.choice([True, False]))
+                elif "timestamp" in dt or "date" in dt:
+                    row.append(datetime(2025, 1, 1) + timedelta(days=random.randint(0, 365)))
+                else:
+                    row.append(f"sample_{c['column_name']}_{i}")
+            rows.append(tuple(row))
+
+        placeholders = ",".join(["%s"] * len(cols))
+        col_names = ",".join(c["column_name"] for c in cols)
+        sql = f"INSERT INTO {schema}.{tbl} ({col_names}) VALUES ({placeholders})"
+        for row in rows:
+            cur.execute(sql, row)
+        conn.commit()
+        total_rows += len(rows)
+
+    return f"Loaded {total_rows} generic sample rows."
+
+
+def _load_mortgage_sample_data(schema: str, cur, conn) -> str:
+    """Load mortgage-specific sample data using the genai_poc bootstrapper generators."""
+    import random
+    random.seed(42)
+    from .genai_poc_bootstrapper import (
+        generate_origination_data, generate_borrower_data, generate_property_data,
+        ORIGINATION_COLS, BORROWER_COLS, PROPERTY_COLS
+    )
+
+    def _insert(table, columns, rows):
+        placeholders = ",".join(["%s"] * len(columns))
+        cols_str = ",".join(columns)
+        sql = f"INSERT INTO {schema}.{table} ({cols_str}) VALUES ({placeholders})"
+        for i in range(0, len(rows), 50):
+            cur.executemany(sql, rows[i:i+50])
+
+    orig_rows = generate_origination_data(100)
+    _insert("origination_currentversion", ORIGINATION_COLS, orig_rows)
+    conn.commit()
+
+    borr_rows = generate_borrower_data(100)
+    _insert("originationborrower_currentversion", BORROWER_COLS, borr_rows)
+    conn.commit()
+
+    prop_rows = generate_property_data(100)
+    _insert("originationproperty_currentversion", PROPERTY_COLS, prop_rows)
+    conn.commit()
+
+    return f"Loaded {len(orig_rows)} origination, {len(borr_rows)} borrower, {len(prop_rows)} property records."

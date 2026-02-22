@@ -686,6 +686,7 @@ def show_option4_workflow(setup_state):
     else:
         schema_name = st.text_input("Schema name to create", value="genai_poc", key="excel_schema_name")
         uploaded_file = st.file_uploader("Upload Excel workbook (3 tabs: Tables, Columns, Queries)", type=["xlsx"])
+        load_data = st.checkbox("📦 Load sample data for testing", value=True, key="excel_load_data")
 
         if uploaded_file and schema_name:
             if st.button("🚀 Import & Create Schema", key="import_excel"):
@@ -712,7 +713,7 @@ def show_option4_workflow(setup_state):
 
                         # Provision schema
                         st.info("🔧 Creating schema, tables, and metadata...")
-                        success, message = provision_schema(schema_name, parsed, execute_query)
+                        success, message = provision_schema(schema_name, parsed, execute_query, load_sample_data=load_data)
 
                         if success:
                             st.success(f"✅ {message}")
