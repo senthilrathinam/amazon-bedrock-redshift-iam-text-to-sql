@@ -893,7 +893,8 @@ def _detect_glossary_status(schema):
 
 def _get_sample_queries(schema: str) -> dict:
     """Build sample queries dict for the dropdown based on connected schema.
-    Loads from examples.yaml if available, falls back to built-in defaults."""
+    Loads from examples.yaml if available, falls back to built-in defaults.
+    For genai_poc* schemas, also loads demo questions from genai_poc_demo section."""
     import yaml
 
     # Try loading schema-specific examples from examples.yaml
@@ -907,7 +908,6 @@ def _get_sample_queries(schema: str) -> dict:
                 for ex in data[schema]:
                     q = ex['question']
                     sql = ex.get('sql', '').strip()
-                    # Auto-detect complexity from SQL
                     join_count = sql.lower().count(' join ')
                     if join_count >= 2:
                         label = f"🔴 Complex: {q}"
@@ -916,6 +916,14 @@ def _get_sample_queries(schema: str) -> dict:
                     else:
                         label = f"🟢 Simple: {q}"
                     queries[label] = q
+
+                # Add demo questions for genai_poc* schemas
+                if schema.startswith('genai_poc') and 'genai_poc_demo' in data:
+                    queries["─── Additional Demo Questions ───"] = ""
+                    for ex in data['genai_poc_demo']:
+                        q = ex['question']
+                        queries[f"🆕 {q}"] = q
+
                 return queries
         except Exception:
             pass

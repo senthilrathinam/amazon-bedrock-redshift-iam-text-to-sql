@@ -1,57 +1,63 @@
+# Golden query examples for few-shot prompting.
+# These are injected into the SQL generation prompt when semantically similar to the user's question.
+# Format: question -> expected SQL
+
+# Additional demo queries (novel questions to prove generalization - no golden SQL needed)
+# These are shown in the dropdown but NOT used for few-shot prompting.
+
 genai_poc:
-- question: Who was the most performing Loan Officer in 2025?
-  sql: 'select oc.paidloname, count(*) as loan_count
+  - question: "Who was the most performing Loan Officer in 2025?"
+    sql: |
+      select oc.paidloname, count(*) as loan_count
+      from genai_poc.origination_currentversion oc
+      where extract(year from oc.fundeddate) = '2025'
+      group by oc.paidloname
+      order by count(*) desc
+      limit 1
 
-    from genai_poc.origination_currentversion oc
+  - question: "Show the count of loans by loan type?"
+    sql: |
+      select mortgagetype, count(*) as loan_type_count
+      from genai_poc.origination_currentversion oc
+      where mortgagetype is not null and mortgagetype <> ''
+      group by oc.mortgagetype
+      order by count(*) desc
 
-    where extract(year from oc.fundeddate) = ''2025''
+  - question: "List the top 5 states by total loan volume."
+    sql: |
+      select op.statecode, sum(oc.baseloanamount) as total_loan_volume
+      from genai_poc.origination_currentversion oc
+          join genai_poc.originationproperty_currentversion op
+              on oc.loannumber = op.loannumber
+      group by op.statecode
+      order by total_loan_volume desc
+      limit 5
 
-    group by oc.paidloname
+  - question: "What is the average interest rate for each different occupancy type?"
+    sql: |
+      select oc.occupancytype, avg(oc.requestedinterestratepercent) as average_interest_rate
+      from genai_poc.origination_currentversion oc
+      where oc.occupancytype is not null and oc.occupancytype <> ''
+      group by oc.occupancytype
 
-    order by count(*) desc
+  - question: "How many Jumbo loans do we have?"
+    sql: |
+      select count(*)
+      from genai_poc.origination_currentversion oc
+      where oc.mortgagetype = 'Conventional' and lower(oc.loanprogramname) like '%jumbo%'
 
-    limit 1
+  - question: "Total funded volume of Loans with Borrower first name as Michael and property located in IL."
+    sql: |
+      select sum(oc.baseloanamount) as total_funded_volume
+      from genai_poc.origination_currentversion oc
+           join genai_poc.originationborrower_currentversion ob on oc.loannumber = ob.loannumber
+           join genai_poc.originationproperty_currentversion op on oc.loannumber = op.loannumber
+      where lower(ob.firstname) = 'michael'
+          and op.statecode = 'IL'
 
-    '
-- question: Show the count of loans by loan type?
-  sql: 'select mortgagetype, count(*) as loan_type_count
-
-    from genai_poc.origination_currentversion oc
-
-    where mortgagetype is not null and mortgagetype <> ''''
-
-    group by oc.mortgagetype
-
-    order by count(*) desc
-
-    '
-- question: List the top 5 states by total loan volume.
-  sql: "select op.statecode, sum(oc.baseloanamount) as total_loan_volume\nfrom genai_poc.origination_currentversion\
-    \ oc\n    join genai_poc.originationproperty_currentversion op\n        on oc.loannumber\
-    \ = op.loannumber\ngroup by op.statecode\norder by total_loan_volume desc\nlimit\
-    \ 5\n"
-- question: What is the average interest rate for each different occupancy type?
-  sql: 'select oc.occupancytype, avg(oc.requestedinterestratepercent) as average_interest_rate
-
-    from genai_poc.origination_currentversion oc
-
-    where oc.occupancytype is not null and oc.occupancytype <> ''''
-
-    group by oc.occupancytype
-
-    '
-- question: How many Jumbo loans do we have?
-  sql: 'select count(*)
-
-    from genai_poc.origination_currentversion oc
-
-    where oc.mortgagetype = ''Conventional'' and lower(oc.loanprogramname) like ''%jumbo%''
-
-    '
-- question: Total funded volume of Loans with Borrower first name as Michael and property
-    located in IL.
-  sql: "select sum(oc.baseloanamount) as total_funded_volume\nfrom genai_poc.origination_currentversion\
-    \ oc\n     join genai_poc.originationborrower_currentversion ob on oc.loannumber\
-    \ = ob.loannumber\n     join genai_poc.originationproperty_currentversion op on\
-    \ oc.loannumber = op.loannumber\nwhere lower(ob.firstname) = 'michael'\n    and\
-    \ op.statecode = 'IL'\n"
+genai_poc_demo:
+  - question: "What is the average loan amount by channel?"
+  - question: "How many loans were funded in each month of 2025?"
+  - question: "Which states have the most first-time home buyers?"
+  - question: "What is the average FICO score of borrowers by mortgage type?"
+  - question: "Show me the top 3 loan officers by total funded volume in 2025"

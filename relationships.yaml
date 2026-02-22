@@ -56,11 +56,11 @@ genai_poc:
   target: origination_currentversion.loannumber
   description: Property belongs to loan origination
 genai_poc1:
-- source: origination_currentversion.loannumber
-  target: originationborrower_currentversion.loannumber
-  description: origination_currentversion references originationborrower_currentversion
+- source: originationborrower_currentversion.loannumber
+  target: originationproperty_currentversion.loannumber
+  description: originationborrower_currentversion references originationproperty_currentversion
     via loannumber
-- source: originationproperty_currentversion.loannumber
-  target: originationborrower_currentversion.loannumber
-  description: originationproperty_currentversion references originationborrower_currentversion
+- source: origination_currentversion.loannumber
+  target: originationproperty_currentversion.loannumber
+  description: origination_currentversion references originationproperty_currentversion
     via loannumber
