@@ -54,3 +54,11 @@ nw_abbr:
   - source: t_emp_mst.rpts_to
     target: t_emp_mst.emp_id
     description: "Employee reports to manager"
+
+genai_poc:
+  - source: originationborrower_currentversion.loannumber
+    target: origination_currentversion.loannumber
+    description: "Borrower belongs to loan origination"
+  - source: originationproperty_currentversion.loannumber
+    target: origination_currentversion.loannumber
+    description: "Property belongs to loan origination"

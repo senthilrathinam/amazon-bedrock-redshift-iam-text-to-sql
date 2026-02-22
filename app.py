@@ -779,6 +779,51 @@ def _detect_glossary_status(schema):
         }
 
 
+def _get_sample_queries(schema: str) -> dict:
+    """Build sample queries dict for the dropdown based on connected schema.
+    Loads from examples.yaml if available, falls back to built-in defaults."""
+    import yaml
+
+    # Try loading schema-specific examples from examples.yaml
+    examples_path = os.path.join(os.path.dirname(__file__), "examples.yaml")
+    if os.path.exists(examples_path):
+        try:
+            with open(examples_path, 'r') as f:
+                data = yaml.safe_load(f) or {}
+            if schema in data and data[schema]:
+                queries = {}
+                for ex in data[schema]:
+                    q = ex['question']
+                    sql = ex.get('sql', '').strip()
+                    # Auto-detect complexity from SQL
+                    join_count = sql.lower().count(' join ')
+                    if join_count >= 2:
+                        label = f"🔴 Complex: {q}"
+                    elif join_count == 1 or 'group by' in sql.lower():
+                        label = f"🟡 Medium: {q}"
+                    else:
+                        label = f"🟢 Simple: {q}"
+                    queries[label] = q
+                return queries
+        except Exception:
+            pass
+
+    # Default queries for northwind / nw_abbr / unknown schemas
+    queries = {
+        "🟢 Simple: How many customers are there?": "How many customers are there?",
+        "🟡 Medium: What are the top 5 products by total quantity ordered?": "What are the top 5 products by total quantity ordered?",
+        "🔴 Complex: Which employees generated the most revenue by country, including the product categories they sold?": "Which employees generated the most revenue by country, including the product categories they sold?",
+    }
+    if schema in ('northwind', 'nw_abbr'):
+        queries.update({
+            "🟢 Simple: What are the top 5 most expensive products?": "What are the top 5 most expensive products?",
+            "🟡 Medium: What's the average order value by country?": "What's the average order value by country?",
+            "🟡 Medium: Which product categories sell the most?": "Which product categories sell the most?",
+            "🔴 Complex: What's the monthly sales trend?": "What's the monthly sales trend?",
+        })
+    return queries
+
+
 def show_main_app():
     """Show main application after setup."""
     setup_state = SetupState()
@@ -1019,19 +1064,7 @@ def show_main_app():
     question = ""
     
     if query_mode == "📋 Sample Questions":
-        SAMPLE_QUERIES = {
-            "🟢 Simple: How many customers are there?": "How many customers are there?",
-            "🟡 Medium: What are the top 5 products by total quantity ordered?": "What are the top 5 products by total quantity ordered?",
-            "🔴 Complex: Which employees generated the most revenue by country, including the product categories they sold?": "Which employees generated the most revenue by country, including the product categories they sold?",
-        }
-        
-        if conn_info['schema'] in ('northwind', 'nw_abbr'):
-            SAMPLE_QUERIES.update({
-                "🟢 Simple: What are the top 5 most expensive products?": "What are the top 5 most expensive products?",
-                "🟡 Medium: What's the average order value by country?": "What's the average order value by country?",
-                "🟡 Medium: Which product categories sell the most?": "Which product categories sell the most?",
-                "🔴 Complex: What's the monthly sales trend?": "What's the monthly sales trend?",
-            })
+        SAMPLE_QUERIES = _get_sample_queries(conn_info['schema'])
         
         selected = st.selectbox("💡 Select a question:", [""] + list(SAMPLE_QUERIES.keys()), index=0)
         question = SAMPLE_QUERIES.get(selected, '')

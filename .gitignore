@@ -52,3 +52,6 @@ generated-diagrams/
 
 # Logs
 *.log
+
+# Personal drafts and notes
+drafts/
