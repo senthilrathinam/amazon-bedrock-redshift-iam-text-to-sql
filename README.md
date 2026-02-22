@@ -245,6 +245,18 @@ When a user interacts with the POC, the flow is as follows:
    | Tab 2: Columns | `table_name`, `column_name`, `data_type`, `comment` | Column definitions with business glossary |
    | Tab 3: Queries | `User Question`, `Expected Query` | Golden query examples for few-shot prompting |
 
+   **How Table Relationships Are Handled (Option 4):**
+   
+   You do NOT need a separate tab for relationships. The application handles JOINs through a two-step process:
+   
+   - **Step 1 — Auto-Detection at Import**: When the Excel is imported, the system automatically detects JOIN relationships by finding columns with the same name across multiple tables (filtered to likely keys like `*id`, `*number`, `*key`, `*code`). For example, if `loannumber` appears in all 3 tables, the system creates the correct JOIN paths automatically.
+   
+   - **Step 2 — Manual Refinement via UI** *(if needed)*: After import, use the **🔗 Manage Relationships** panel in the sidebar to review, add, edit, or delete relationships visually. This is useful when auto-detection misses a relationship (e.g., columns with different names that should be joined) or creates a false positive.
+   
+   - **Optional — `[FK:]` Hints in Comments**: For advanced users, you can embed relationship hints directly in the `comment` column of Tab 2 using the format: `Description text [FK: target_table.column]`. These are automatically parsed during schema indexing.
+   
+   This approach keeps the Excel simple (3 tabs only) while ensuring the AI always has the correct JOIN paths for SQL generation.
+
 11. **Start Analyzing**: Once setup is complete, you can use sample queries (Simple/Medium/Complex) from the dropdown or enter custom questions:
    - "What are the top 5 customers by order value?"
    - "Show me monthly sales trends for 1997"
