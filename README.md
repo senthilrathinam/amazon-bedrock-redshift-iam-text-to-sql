@@ -3,9 +3,18 @@
 
 ## Overview of Solution
 
-This is sample code demonstrating the use of Amazon Bedrock and Generative AI to create an intelligent sales data analyst that uses natural language questions to query relational data stores, specifically Amazon Redshift. This example leverages the complete Northwind sample database with realistic sales scenarios containing customers, orders, and order details.
+This is sample code demonstrating the use of Amazon Bedrock and Generative AI to create an intelligent data analyst that uses natural language questions to query relational data stores, specifically Amazon Redshift. This example leverages the complete Northwind sample database with realistic sales scenarios, and also supports **customer-specific schemas** imported via Excel workbooks.
 
 The application supports both **descriptive schemas** (readable table/column names) and **cryptic/abbreviated schemas** with business glossary metadata via Redshift's `COMMENT ON` feature. It automatically detects which type of schema you're working with and adapts accordingly.
+
+### Key Capabilities
+
+- **Natural Language to SQL**: Ask questions in plain English, get optimized SQL queries and insights
+- **Few-Shot Learning**: Golden query examples guide the LLM to generate accurate SQL for your specific schema
+- **SQL Quality Assurance**: Generated SQL is validated against the actual schema — hallucinated columns are caught and auto-corrected
+- **Excel-Based Schema Import**: Upload a 3-tab Excel workbook to auto-create schemas, tables, metadata, relationships, and sample queries (Option 4)
+- **Business Glossary**: `COMMENT ON` metadata enriches semantic search for cryptic/abbreviated column names
+- **Relationship Manager**: Explicit JOIN paths from 4 sources (FK constraints, comments, YAML, UI) — no guessing
 
 **Please Note: If you don't want to build this from scratch, Amazon Redshift now supports GenAI capabilities natively, more information on that can be found [here](https://aws.amazon.com/blogs/aws/amazon-redshift-adds-new-ai-capabilities-to-boost-efficiency-and-productivity/).**
 
@@ -29,6 +38,9 @@ When a user interacts with the POC, the flow is as follows:
 2. **Context Retrieval**: The system performs semantic search using FAISS vector store to retrieve only the relevant tables and columns. Tables are filtered by embedding distance, and columns within large tables are further filtered by semantic similarity to the question (`src/graph/workflow.py` - `retrieve_context()`)
 
 3. **Intelligent SQL Generation**: Amazon Bedrock (Claude Sonnet 4.5) generates optimized SQL queries using the filtered context, ensuring proper table joins and data type handling. Generated SQL is validated to be read-only (SELECT only) before execution (`src/graph/workflow.py` - `generate_sql()`)
+   - **Few-Shot Prompting**: The 3 most semantically similar golden queries from `examples.yaml` are injected into the prompt to guide accurate SQL generation
+   - **Strict Column Validation**: Generated SQL is parsed and all column references are validated against the actual schema — hallucinated columns trigger an automatic retry with correction feedback
+   - **Small Schema Optimization**: For schemas with ≤5 tables, all tables and columns are passed to the LLM (no distance-based filtering)
 
 4. **Secure Query Execution**: The SQL query is executed against the Redshift cluster through a connection pool. For private clusters, connection goes through a secure SSM tunnel via the EC2 bastion host (`src/utils/redshift_connector_iam.py`)
 
@@ -85,8 +97,13 @@ When a user interacts with the POC, the flow is as follows:
     * `src/vector_store/faiss_manager.py` - FAISS vector store for per-table semantic search
     * `src/utils/redshift_cluster_manager.py` - Automatic AWS infrastructure provisioning
     * `src/utils/redshift_connector_iam.py` - Connection pooling and secure database access
-    * `src/utils/northwind_bootstrapper.py` - Automatic sample data loading
+    * `src/utils/northwind_bootstrapper.py` - Automatic sample data loading (Northwind)
+    * `src/utils/excel_knowledge_loader.py` - Excel workbook parser for customer schema import (Option 4)
+    * `src/utils/genai_poc_bootstrapper.py` - Mortgage POC schema bootstrapper with sample data
+    * `src/utils/relationship_manager.py` - Merges JOIN metadata from 4 sources (FK, comments, YAML, UI)
     * `src/config/settings.py` - Application configuration (model ID, region)
+    * `examples.yaml` - Golden query examples for few-shot prompting (per schema)
+    * `relationships.yaml` - Table JOIN relationships for schemas without FK constraints
     * `cleanup.py` - AWS resource cleanup script
 
 3. Open the repository in your favorite code editor. In the terminal, navigate to the POC's folder:
@@ -191,7 +208,7 @@ When a user interacts with the POC, the flow is as follows:
     streamlit run app.py
     ```
 
-10. **Setup Options**: The application provides three setup options:
+10. **Setup Options**: The application provides four setup options:
 
    **Option 1: Create New Cluster**
    - Creates a new private Redshift cluster with default settings from `.env`
@@ -211,6 +228,22 @@ When a user interacts with the POC, the flow is as follows:
    - No data loading - uses your existing tables
    - Indexes your schema for AI queries
    - Takes ~2 minutes
+
+   **Option 4: Import from Excel** *(New)*
+   - Upload a 3-tab Excel workbook (Tables, Columns, Queries) to auto-create a schema
+   - Automatically creates tables with correct data types and `COMMENT ON` metadata (business glossary)
+   - Auto-detects JOIN relationships from shared column names
+   - Saves golden queries for few-shot prompting and sample question dropdown
+   - Optional: loads sample data for testing (checkbox in UI)
+   - Schema prefix in golden queries is automatically replaced to match the target schema name
+   - Takes ~3 minutes
+
+   **Excel Workbook Format (Option 4):**
+   | Tab | Columns | Purpose |
+   |-----|---------|---------|
+   | Tab 1: Tables | `Tables`, `Description` | Table names and business descriptions |
+   | Tab 2: Columns | `table_name`, `column_name`, `data_type`, `comment` | Column definitions with business glossary |
+   | Tab 3: Queries | `User Question`, `Expected Query` | Golden query examples for few-shot prompting |
 
 11. **Start Analyzing**: Once setup is complete, you can use sample queries (Simple/Medium/Complex) from the dropdown or enter custom questions:
    - "What are the top 5 customers by order value?"
@@ -264,6 +297,11 @@ This will automatically remove all created AWS resources including the Redshift 
 ## Architecture Highlights
 
 - **Per-Table Semantic Search**: Each table is indexed as a separate FAISS document with column-level filtering — only relevant tables and columns are passed to the LLM
+- **Few-Shot Learning**: Golden query examples from `examples.yaml` are matched by semantic similarity and injected into the prompt — teaches the LLM correct patterns without memorizing answers
+- **SQL Column Validation**: Generated SQL is parsed and all column/table references are validated against the actual schema — hallucinated columns trigger an automatic retry with correction feedback
+- **Small Schema Optimization**: For schemas with ≤5 tables, all tables and columns are passed to the LLM without distance-based filtering
+- **Excel-Based Schema Import**: Upload a 3-tab Excel workbook (Tables, Columns, Queries) to auto-create schemas with `COMMENT ON` metadata, relationships, and golden queries
+- **Dynamic Sample Questions**: The sample questions dropdown auto-populates from `examples.yaml` based on the connected schema, with auto-detected complexity labels (🟢 Simple / 🟡 Medium / 🔴 Complex)
 - **Business Glossary Support**: Automatically reads `COMMENT ON` metadata from Redshift tables/columns and uses business descriptions for semantic matching on cryptic schemas
 - **Glossary Auto-Detection**: Detects whether your schema uses descriptive names or cryptic/abbreviated names and shows appropriate guidance
 - **Relationship Manager**: Merges join metadata from 4 sources (FK constraints, `COMMENT ON` `[FK:]` patterns, YAML config, UI edits) so the AI generates correct JOINs even without database-level constraints — [full docs](RELATIONSHIP_MANAGER.md)
