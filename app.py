@@ -1192,7 +1192,7 @@ def show_main_app():
     if query_mode == "📋 Sample Questions":
         SAMPLE_QUERIES = _get_sample_queries(conn_info['schema'])
         
-        selected = st.selectbox("💡 Select a question:", [""] + list(SAMPLE_QUERIES.keys()), index=0)
+        selected = st.selectbox("💡 Select a question:", ["-- Select a question --"] + list(SAMPLE_QUERIES.keys()), index=0)
         question = SAMPLE_QUERIES.get(selected, '')
     else:
         question = st.text_input("💬 Enter your question:", placeholder="e.g., What are the top 10 customers by revenue?")
