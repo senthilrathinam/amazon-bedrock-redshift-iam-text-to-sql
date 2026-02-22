@@ -45,12 +45,14 @@ def show_setup_wizard(setup_state):
             show_option2_workflow(setup_state)
         elif state['setup_option'] == 3:
             show_option3_workflow(setup_state)
+        elif state['setup_option'] == 4:
+            show_option4_workflow(setup_state)
         return
     
     # Landing page - show option choices
     st.markdown("Choose how you want to get started:")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown("### Option 1")
@@ -114,6 +116,18 @@ def show_setup_wizard(setup_state):
         if st.button("Select Option 3", key="opt3", width="stretch"):
             setup_state.reset_state()  # Clear any cached connection
             setup_state.update_state(setup_option=3)
+            st.rerun()
+    
+    with col4:
+        st.markdown("### Option 4")
+        st.markdown("**Import from Excel**")
+        st.write("• Upload schema Excel workbook")
+        st.write("• Auto-creates tables + metadata")
+        st.write("• Loads golden queries")
+        st.write("⏱️ ~3 minutes")
+        if st.button("Select Option 4", key="opt4", width="stretch"):
+            setup_state.reset_state()
+            setup_state.update_state(setup_option=4)
             st.rerun()
     
     # Reset button for clearing stale state
@@ -625,6 +639,103 @@ def show_option3_workflow(setup_state):
     
     st.success("🎉 Setup complete!")
     if st.button("Start Using App"):
+        setup_state.mark_setup_complete()
+        st.rerun()
+
+
+def show_option4_workflow(setup_state):
+    """Option 4: Import from Excel workbook."""
+    st.markdown("## Option 4: Import from Excel")
+
+    state = setup_state.get_state()
+
+    # Step 1: Connect to cluster
+    if not state['connection'].get('host'):
+        st.markdown("### Step 1: Enter Cluster Connection")
+        with st.form("excel_cluster_config"):
+            host = st.text_input("Cluster Endpoint", value=os.getenv('OPTION3_HOST', ''), placeholder="cluster.xxx.redshift.amazonaws.com")
+            database = st.text_input("Database", value=os.getenv('OPTION3_DATABASE', 'dev'))
+            user = st.text_input("Username", value=os.getenv('OPTION3_USER', 'awsuser'))
+            password = st.text_input("Password", type="password", value=os.getenv('OPTION3_PASSWORD', ''))
+
+            if st.form_submit_button("Test Connection"):
+                if host and database and user and password:
+                    try:
+                        os.environ['REDSHIFT_HOST'] = host
+                        os.environ['REDSHIFT_DATABASE'] = database
+                        os.environ['REDSHIFT_USER'] = user
+                        os.environ['REDSHIFT_PASSWORD'] = password
+                        from src.utils.redshift_connector_iam import _reset_pool
+                        _reset_pool()
+                        execute_query("SELECT 1")
+                        setup_state.update_connection(host=host, database=database, schema='', user=user, password=password)
+                        st.success("✅ Connection successful!")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Connection failed: {str(e)}")
+        return
+
+    st.success(f"✅ Connected to: {state['connection']['host']}")
+
+    # Step 2: Upload Excel and specify schema
+    st.markdown("### Step 2: Upload Excel & Create Schema")
+
+    if state.get('schema_indexed'):
+        st.success(f"✅ Schema `{state['connection']['schema']}` created and indexed")
+    else:
+        schema_name = st.text_input("Schema name to create", value="genai_poc", key="excel_schema_name")
+        uploaded_file = st.file_uploader("Upload Excel workbook (3 tabs: Tables, Columns, Queries)", type=["xlsx"])
+
+        if uploaded_file and schema_name:
+            if st.button("🚀 Import & Create Schema", key="import_excel"):
+                with st.spinner("Processing Excel and creating schema..."):
+                    try:
+                        from src.utils.excel_knowledge_loader import parse_excel, provision_schema
+                        import io
+
+                        # Parse Excel
+                        st.info("📖 Parsing Excel workbook...")
+                        parsed = parse_excel(io.BytesIO(uploaded_file.read()))
+                        st.info(f"Found {len(parsed['tables'])} tables, {len(parsed['columns'])} columns, {len(parsed['queries'])} queries")
+
+                        # Set connection env vars
+                        conn_info = state['connection']
+                        os.environ['REDSHIFT_HOST'] = conn_info['host']
+                        os.environ['REDSHIFT_DATABASE'] = conn_info['database']
+                        os.environ['REDSHIFT_USER'] = conn_info['user']
+                        os.environ['REDSHIFT_PASSWORD'] = conn_info['password']
+                        os.environ['REDSHIFT_SCHEMA'] = schema_name
+
+                        from src.utils.redshift_connector_iam import _reset_pool
+                        _reset_pool()
+
+                        # Provision schema
+                        st.info("🔧 Creating schema, tables, and metadata...")
+                        success, message = provision_schema(schema_name, parsed, execute_query)
+
+                        if success:
+                            st.success(f"✅ {message}")
+                            setup_state.update_connection(schema=schema_name)
+
+                            # Index schema
+                            st.info("🤖 Indexing schema for AI queries...")
+                            bedrock = BedrockHelper(region_name=os.getenv('AWS_REGION', 'us-east-1'))
+                            vector_store = FAISSManager(bedrock_client=bedrock)
+                            load_metadata(vector_store, schema_name)
+
+                            setup_state.update_state(schema_indexed=True, data_loaded=True)
+                            st.success("✅ Schema indexed!")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
+        return
+
+    st.success("🎉 Setup complete!")
+    if st.button("Start Using App", key="start_opt4"):
         setup_state.mark_setup_complete()
         st.rerun()
 
