@@ -195,27 +195,41 @@ def show_option1_workflow(setup_state):
     
     # Start SSM tunnel if using localhost and cluster is created
     if state['cluster_created'] and state['connection']['host'] == 'localhost':
-        import subprocess
+        import subprocess, socket
+        # Check if port 5439 is actually reachable
+        tunnel_ready = False
         try:
-            result = subprocess.run(['pgrep', '-f', 'session-manager-plugin'], 
-                                  capture_output=True, text=True)
-            if not result.stdout.strip():
-                # Tunnel not running, start it
+            s = socket.create_connection(('127.0.0.1', 5439), timeout=2)
+            s.close()
+            tunnel_ready = True
+        except:
+            pass
+        
+        if not tunnel_ready:
+            try:
                 import boto3
                 ec2 = boto3.client('ec2', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-                redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
+                
+                subprocess.run(['pkill', '-f', 'session-manager-plugin'], capture_output=True)
+                time.sleep(1)
                 
                 instances = ec2.describe_instances(
                     Filters=[
-                        {'Name': 'tag:Name', 'Values': ['sales-analyst-bastion']},
+                        {'Name': 'tag:Name', 'Values': ['*bastion*', '*Bastion*']},
                         {'Name': 'instance-state-name', 'Values': ['running']}
                     ]
                 )
                 
                 if instances['Reservations']:
                     bastion_id = instances['Reservations'][0]['Instances'][0]['InstanceId']
-                    cluster_info = redshift.describe_clusters(ClusterIdentifier='sales-analyst-cluster')
-                    endpoint = cluster_info['Clusters'][0]['Endpoint']['Address']
+                    
+                    # Use saved endpoint or look up from cluster
+                    endpoint = state.get('cluster_endpoint', '')
+                    if not endpoint:
+                        redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
+                        cluster_id = state.get('cluster_id', 'sales-analyst-cluster')
+                        cluster_info = redshift.describe_clusters(ClusterIdentifier=cluster_id)
+                        endpoint = cluster_info['Clusters'][0]['Endpoint']['Address']
                     
                     subprocess.Popen([
                         'aws', 'ssm', 'start-session',
@@ -226,10 +240,22 @@ def show_option1_workflow(setup_state):
                     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     
                     st.info("🔄 Starting SSM tunnel... Please wait.")
-                    time.sleep(5)
-                    st.rerun()
-        except:
-            pass
+                    for _ in range(15):
+                        time.sleep(1)
+                        try:
+                            s = socket.create_connection(('127.0.0.1', 5439), timeout=1)
+                            s.close()
+                            tunnel_ready = True
+                            break
+                        except:
+                            pass
+                    
+                    if tunnel_ready:
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ SSM tunnel may not be ready. Please refresh the page in a few seconds.")
+            except:
+                pass
     
     # Step 1: Create Cluster (with check for existing)
     st.markdown("### Step 1: Create Redshift Cluster")
@@ -419,14 +445,31 @@ def show_option2_workflow(setup_state):
             if st.form_submit_button("Test Connection"):
                 if host and database and user and password:
                     try:
-                        os.environ['REDSHIFT_HOST'] = host
+                        import subprocess, socket
+                        
                         os.environ['REDSHIFT_DATABASE'] = database
                         os.environ['REDSHIFT_USER'] = user
                         os.environ['REDSHIFT_PASSWORD'] = password
-                        
                         from src.utils.redshift_connector_iam import _reset_pool
-                        _reset_pool()
-                        execute_query("SELECT 1")
+                        
+                        # If a tunnel is already running, use it
+                        tunnel_exists = False
+                        try:
+                            s = socket.create_connection(('127.0.0.1', 5439), timeout=1)
+                            s.close()
+                            tunnel_exists = True
+                        except:
+                            pass
+                        
+                        if tunnel_exists:
+                            os.environ['REDSHIFT_HOST'] = 'localhost'
+                            _reset_pool()
+                            execute_query("SELECT 1")
+                            host = 'localhost'
+                        else:
+                            os.environ['REDSHIFT_HOST'] = host
+                            _reset_pool()
+                            execute_query("SELECT 1")
                         
                         setup_state.update_connection(host=host, database=database, schema='northwind', user=user, password=password)
                         st.success("✅ Connection successful!")
@@ -589,18 +632,98 @@ def show_option3_workflow(setup_state):
             if st.form_submit_button("Test Connection"):
                 if host and database and schema and user and password:
                     try:
-                        os.environ['REDSHIFT_HOST'] = host
+                        import subprocess, socket
+                        
                         os.environ['REDSHIFT_DATABASE'] = database
                         os.environ['REDSHIFT_SCHEMA'] = schema
                         os.environ['REDSHIFT_USER'] = user
                         os.environ['REDSHIFT_PASSWORD'] = password
                         
                         from src.utils.redshift_connector_iam import _reset_pool
-                        _reset_pool()
                         
-                        result = execute_query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s", (schema,))
+                        # If a tunnel is already running on port 5439, use it directly
+                        tunnel_exists = False
+                        try:
+                            s = socket.create_connection(('127.0.0.1', 5439), timeout=1)
+                            s.close()
+                            tunnel_exists = True
+                        except:
+                            pass
+                        
+                        if tunnel_exists:
+                            os.environ['REDSHIFT_HOST'] = 'localhost'
+                            _reset_pool()
+                            result = execute_query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s", (schema,))
+                            host = 'localhost'
+                            setup_state.update_state(cluster_endpoint=host)
+                        else:
+                            # No tunnel — try direct connection
+                            os.environ['REDSHIFT_HOST'] = host
+                            _reset_pool()
+                            try:
+                                result = execute_query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s", (schema,))
+                            except Exception:
+                                # Direct failed — check if private and set up tunnel
+                                st.info("⚠️ Direct connection failed. Checking if cluster is private...")
+                                import boto3
+                                redshift_client = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
+                                ec2_client = boto3.client('ec2', region_name=os.getenv('AWS_REGION', 'us-east-1'))
+                                
+                                cluster_id = host.split('.')[0]
+                                cluster_info = redshift_client.describe_clusters(ClusterIdentifier=cluster_id)
+                                is_public = cluster_info['Clusters'][0].get('PubliclyAccessible', False)
+                                
+                                if not is_public:
+                                    st.info("🔒 Private cluster detected. Setting up SSM tunnel...")
+                                    endpoint = cluster_info['Clusters'][0]['Endpoint']['Address']
+                                    
+                                    subprocess.run(['pkill', '-f', 'session-manager-plugin'], capture_output=True)
+                                    time.sleep(1)
+                                    
+                                    instances = ec2_client.describe_instances(Filters=[
+                                        {'Name': 'tag:Name', 'Values': ['*bastion*', '*Bastion*']},
+                                        {'Name': 'instance-state-name', 'Values': ['running']}
+                                    ])
+                                    
+                                    if not instances['Reservations']:
+                                        st.info("🔧 Creating bastion host...")
+                                        from src.utils.redshift_cluster_manager import create_bastion_host
+                                        bastion_id = create_bastion_host()
+                                    else:
+                                        bastion_id = instances['Reservations'][0]['Instances'][0]['InstanceId']
+                                    
+                                    subprocess.Popen([
+                                        'aws', 'ssm', 'start-session',
+                                        '--target', bastion_id,
+                                        '--document-name', 'AWS-StartPortForwardingSessionToRemoteHost',
+                                        '--parameters', f'{{"host":["{endpoint}"],"portNumber":["5439"],"localPortNumber":["5439"]}}',
+                                        '--region', os.getenv('AWS_REGION', 'us-east-1')
+                                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                    
+                                    st.info("🔄 Starting SSM tunnel... Please wait.")
+                                    tunnel_ready = False
+                                    for _ in range(15):
+                                        time.sleep(1)
+                                        try:
+                                            s = socket.create_connection(('127.0.0.1', 5439), timeout=1)
+                                            s.close()
+                                            tunnel_ready = True
+                                            break
+                                        except:
+                                            pass
+                                    
+                                    if not tunnel_ready:
+                                        st.error("❌ SSM tunnel failed to start. Check bastion host and SSM agent status.")
+                                        return
+                                    
+                                    os.environ['REDSHIFT_HOST'] = 'localhost'
+                                    host = 'localhost'
+                                    _reset_pool()
+                                    setup_state.update_state(cluster_endpoint=endpoint)
+                                
+                                result = execute_query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = %s", (schema,))
+                        
                         table_count = result[0][0]
-                        
                         setup_state.update_connection(host=host, database=database, schema=schema, user=user, password=password)
                         st.success(f"✅ Connection successful! Found {table_count} tables")
                         time.sleep(1)
@@ -662,13 +785,81 @@ def show_option4_workflow(setup_state):
             if st.form_submit_button("Test Connection"):
                 if host and database and user and password:
                     try:
-                        os.environ['REDSHIFT_HOST'] = host
+                        import subprocess, socket
+                        
                         os.environ['REDSHIFT_DATABASE'] = database
                         os.environ['REDSHIFT_USER'] = user
                         os.environ['REDSHIFT_PASSWORD'] = password
                         from src.utils.redshift_connector_iam import _reset_pool
-                        _reset_pool()
-                        execute_query("SELECT 1")
+                        
+                        # If a tunnel is already running on port 5439, use it directly
+                        tunnel_exists = False
+                        try:
+                            s = socket.create_connection(('127.0.0.1', 5439), timeout=1)
+                            s.close()
+                            tunnel_exists = True
+                        except:
+                            pass
+                        
+                        if tunnel_exists:
+                            os.environ['REDSHIFT_HOST'] = 'localhost'
+                            _reset_pool()
+                            execute_query("SELECT 1")
+                            host = 'localhost'
+                        else:
+                            os.environ['REDSHIFT_HOST'] = host
+                            _reset_pool()
+                            try:
+                                execute_query("SELECT 1")
+                            except Exception:
+                                st.info("⚠️ Direct connection failed. Checking if cluster is private...")
+                                import boto3
+                                redshift_client = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
+                                ec2_client = boto3.client('ec2', region_name=os.getenv('AWS_REGION', 'us-east-1'))
+                                cluster_id = host.split('.')[0]
+                                cluster_info = redshift_client.describe_clusters(ClusterIdentifier=cluster_id)
+                                is_public = cluster_info['Clusters'][0].get('PubliclyAccessible', False)
+                                
+                                if not is_public:
+                                    st.info("🔒 Private cluster detected. Setting up SSM tunnel...")
+                                    endpoint = cluster_info['Clusters'][0]['Endpoint']['Address']
+                                    subprocess.run(['pkill', '-f', 'session-manager-plugin'], capture_output=True)
+                                    time.sleep(1)
+                                    instances = ec2_client.describe_instances(Filters=[
+                                        {'Name': 'tag:Name', 'Values': ['*bastion*', '*Bastion*']},
+                                        {'Name': 'instance-state-name', 'Values': ['running']}
+                                    ])
+                                    if not instances['Reservations']:
+                                        from src.utils.redshift_cluster_manager import create_bastion_host
+                                        bastion_id = create_bastion_host()
+                                    else:
+                                        bastion_id = instances['Reservations'][0]['Instances'][0]['InstanceId']
+                                    subprocess.Popen([
+                                        'aws', 'ssm', 'start-session', '--target', bastion_id,
+                                        '--document-name', 'AWS-StartPortForwardingSessionToRemoteHost',
+                                        '--parameters', f'{{"host":["{endpoint}"],"portNumber":["5439"],"localPortNumber":["5439"]}}',
+                                        '--region', os.getenv('AWS_REGION', 'us-east-1')
+                                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                    st.info("🔄 Starting SSM tunnel... Please wait.")
+                                    tunnel_ready = False
+                                    for _ in range(15):
+                                        time.sleep(1)
+                                        try:
+                                            s = socket.create_connection(('127.0.0.1', 5439), timeout=1)
+                                            s.close()
+                                            tunnel_ready = True
+                                            break
+                                        except:
+                                            pass
+                                    if not tunnel_ready:
+                                        st.error("❌ SSM tunnel failed to start.")
+                                        return
+                                    os.environ['REDSHIFT_HOST'] = 'localhost'
+                                    host = 'localhost'
+                                    _reset_pool()
+                                    setup_state.update_state(cluster_endpoint=endpoint)
+                                execute_query("SELECT 1")
+                        
                         setup_state.update_connection(host=host, database=database, schema='', user=user, password=password)
                         st.success("✅ Connection successful!")
                         time.sleep(1)
@@ -959,21 +1150,30 @@ def show_main_app():
     
     # Start SSM tunnel if using localhost (private cluster)
     if conn_info['host'] == 'localhost':
-        import subprocess
-        # Check if tunnel is already running
+        import subprocess, socket
+        # Check if port 5439 is actually reachable (not just process running)
+        tunnel_ready = False
         try:
-            result = subprocess.run(['pgrep', '-f', 'session-manager-plugin'], 
-                                  capture_output=True, text=True)
-            if not result.stdout.strip():
-                # Tunnel not running, start it
+            s = socket.create_connection(('127.0.0.1', 5439), timeout=2)
+            s.close()
+            tunnel_ready = True
+        except:
+            pass
+        
+        if not tunnel_ready:
+            # Tunnel not ready, start it
+            try:
                 import boto3
                 ec2 = boto3.client('ec2', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-                redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
                 
-                # Get bastion instance
+                # Kill any stale tunnel processes
+                subprocess.run(['pkill', '-f', 'session-manager-plugin'], capture_output=True)
+                time.sleep(1)
+                
+                # Find running bastion host
                 instances = ec2.describe_instances(
                     Filters=[
-                        {'Name': 'tag:Name', 'Values': ['sales-analyst-bastion']},
+                        {'Name': 'tag:Name', 'Values': ['*bastion*', '*Bastion*']},
                         {'Name': 'instance-state-name', 'Values': ['running', 'stopped']}
                     ]
                 )
@@ -989,24 +1189,48 @@ def show_main_app():
                         ec2.get_waiter('instance_running').wait(InstanceIds=[bastion_id])
                         time.sleep(30)  # Wait for SSM agent
                     
-                    # Get cluster endpoint
-                    cluster_info = redshift.describe_clusters(ClusterIdentifier='sales-analyst-cluster')
-                    endpoint = cluster_info['Clusters'][0]['Endpoint']['Address']
+                    # Get the actual cluster endpoint from saved state or derive from cluster
+                    endpoint = state.get('cluster_endpoint', '')
+                    if not endpoint:
+                        # Try to find the cluster endpoint from the original host in .env or state
+                        redshift = boto3.client('redshift', region_name=os.getenv('AWS_REGION', 'us-east-1'))
+                        try:
+                            clusters = redshift.describe_clusters()
+                            for c in clusters['Clusters']:
+                                if c['ClusterStatus'] == 'available' and not c.get('PubliclyAccessible', True):
+                                    endpoint = c['Endpoint']['Address']
+                                    break
+                        except:
+                            pass
                     
-                    # Start tunnel in background
-                    subprocess.Popen([
-                        'aws', 'ssm', 'start-session',
-                        '--target', bastion_id,
-                        '--document-name', 'AWS-StartPortForwardingSessionToRemoteHost',
-                        '--parameters', f'{{"host":["{endpoint}"],"portNumber":["5439"],"localPortNumber":["5439"]}}',
-                        '--region', os.getenv('AWS_REGION', 'us-east-1')
-                    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    
-                    st.info("🔄 Starting SSM tunnel... Please wait 5 seconds and refresh.")
-                    time.sleep(5)
-                    st.rerun()
-        except:
-            pass
+                    if endpoint:
+                        # Start tunnel in background
+                        subprocess.Popen([
+                            'aws', 'ssm', 'start-session',
+                            '--target', bastion_id,
+                            '--document-name', 'AWS-StartPortForwardingSessionToRemoteHost',
+                            '--parameters', f'{{"host":["{endpoint}"],"portNumber":["5439"],"localPortNumber":["5439"]}}',
+                            '--region', os.getenv('AWS_REGION', 'us-east-1')
+                        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        
+                        # Wait for tunnel to be ready (up to 15 seconds)
+                        st.info("🔄 Starting SSM tunnel... Please wait.")
+                        for _ in range(15):
+                            time.sleep(1)
+                            try:
+                                s = socket.create_connection(('127.0.0.1', 5439), timeout=1)
+                                s.close()
+                                tunnel_ready = True
+                                break
+                            except:
+                                pass
+                        
+                        if tunnel_ready:
+                            st.rerun()
+                        else:
+                            st.warning("⚠️ SSM tunnel may not be ready. Please refresh the page in a few seconds.")
+            except:
+                pass
     
     os.environ['REDSHIFT_HOST'] = conn_info['host']
     os.environ['REDSHIFT_DATABASE'] = conn_info['database']
